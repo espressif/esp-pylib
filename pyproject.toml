@@ -1,0 +1,95 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "esp-pylib"
+dynamic = ["version"]
+description = "Python library for logging, utils and constants for Espressif Systems' Python projects"
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.7"
+authors = [
+  { name = "Espressif Systems" }
+]
+keywords = ["python", "espressif"]
+classifiers = [
+  "Development Status :: 1 - Planning",
+  "Intended Audience :: Developers",
+  "Natural Language :: English",
+  "Environment :: Console",
+  "Topic :: Software Development :: Embedded Systems",
+  "Programming Language :: Python :: 3.7",
+  "Programming Language :: Python :: 3.8",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "License :: OSI Approved :: Apache Software License",
+  "Operating System :: POSIX",
+  "Operating System :: Microsoft :: Windows",
+  "Operating System :: MacOS :: MacOS X",
+]
+dependencies = [
+  'rich'
+]
+
+[project.urls]
+Homepage = "https://github.com/espressif/esp-pylib"
+Repository = "https://github.com/espressif/esp-pylib"
+Source = "https://github.com/espressif/esp-pylib/"
+Tracker = "https://github.com/espressif/esp-pylib/issues/"
+Changelog = "https://github.com/espressif/esp-pylib/blob/master/CHANGELOG.md"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["esp_pylib*"]
+
+[tool.setuptools.dynamic]
+version = { attr = "esp_pylib.__version__.__version__" }
+
+[project.optional-dependencies]
+dev = [
+  "pre-commit",
+  "czespressif",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py37"
+
+[tool.ruff.format]
+quote-style = 'single'
+indent-style = 'space'
+docstring-code-format = true
+
+[tool.ruff.lint]
+select = ["F", "E", "W", "I", "UP"]
+fixable = ["ALL"]
+unfixable = []
+
+[tool.ruff.lint.isort]
+known-first-party = ["esp_pylib"]
+force-single-line = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.mypy]
+python_version = "3.7"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
+
+[tool.commitizen]
+name = "czespressif"
+version = "0.1"
+update_changelog_on_bump = true
+tag_format = "v$version"
+changelog_start_rev = "v0.1"
+changelog_merge_prerelease = true
+annotated_tag = true
+bump_message = "change(bump): Update version to $new_version"
+version_files = ["esp_pylib/__version__.py"]

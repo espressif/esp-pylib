@@ -1,0 +1,3 @@
+# __all__ = ['USB_JTAG_SERIAL_PID']
+
+# USB_JTAG_SERIAL_PID = 0x1001
