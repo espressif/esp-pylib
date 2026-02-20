@@ -41,6 +41,12 @@ repos:
         additional_dependencies:
           - tomli
 
+  - repo: https://github.com/espressif/check-copyright/
+    rev: v1.1.2
+    hooks:
+      - id: check-copyright
+        args: ['--config', 'ci/check_copyright_config.yaml', '--replace']
+
   - repo: https://github.com/espressif/conventional-precommit-linter
     rev: v1.11.0
     hooks:
