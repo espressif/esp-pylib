@@ -1,0 +1,80 @@
+name: Create release draft
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-esp-pylib:
+    name: Build source tarball
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get version
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+        shell: bash
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
+      - name: Install build dependency
+        run: python -m pip install --upgrade pip build
+      - name: Build source distribution
+        run: python -m build --sdist
+      - name: Rename tarball for release
+        run: |
+          VERSION="${{ steps.get_version.outputs.VERSION }}"
+          mv dist/esp-pylib-*.tar.gz "dist/esp-pylib-v${VERSION}.tar.gz"
+          ls -la dist/
+      - name: Upload source tarball
+        uses: actions/upload-artifact@v4
+        with:
+          name: esp-pylib-sdist
+          path: dist/esp-pylib-v${{ steps.get_version.outputs.VERSION }}.tar.gz
+
+  create_release:
+    name: Create GitHub release
+    needs: [build-esp-pylib]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Get version
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+        shell: bash
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Download source tarball
+        uses: actions/download-artifact@v4
+        with:
+          name: esp-pylib-sdist
+          path: dist
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
+      - name: Install dependencies
+        run: |
+          python -m pip install -e ".[dev]"
+      - name: Generate changelog
+        run: |
+          cz changelog ${{ steps.get_version.outputs.VERSION }} --file-name changelog_body.md
+          cat changelog_body.md
+      - name: Create release
+        id: create_release
+        uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          body_path: changelog_body.md
+          name: Version ${{ steps.get_version.outputs.VERSION }}
+          draft: true
+          prerelease: false
+          files: |
+            dist/esp-pylib-v${{ steps.get_version.outputs.VERSION }}.tar.gz
