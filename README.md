@@ -8,6 +8,10 @@ Python library for logging, utils and constants for Espressif Systems' Python pr
 pip install esp-pylib
 ```
 
+## Modules
+
+- **`esp_pylib.constants`** — Single place for cross-tool constants (e.g. Espressif USB VID/PID, default ROM baud rate, serial port name patterns, and Unix `termios` modem-control bits where available).
+
 ## How to Contribute
 
 First, set up the development environment:
@@ -20,6 +24,7 @@ source venv/bin/activate
 pip install -e ".[dev]"
 pre-commit install
 ```
+
 ## How to Release (For Maintainers Only)
 
 ```bash
