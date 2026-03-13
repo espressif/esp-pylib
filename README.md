@@ -11,6 +11,7 @@ pip install esp-pylib
 ## Modules
 
 - **`esp_pylib.constants`** — Single place for cross-tool constants (e.g. Espressif USB VID/PID, default ROM baud rate, serial port name patterns, and Unix `termios` modem-control bits where available).
+- **`esp_pylib.errors`** — A small exception hierarchy (`FatalError` and common subclasses such as `NoSerialPortFoundError`, `ConfigError`) for consistent error handling across tools.
 
 ## How to Contribute
 
