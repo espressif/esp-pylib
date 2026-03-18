@@ -66,7 +66,7 @@ indent-style = 'space'
 docstring-code-format = true
 
 [tool.ruff.lint]
-select = ["F", "E", "W", "I", "UP"]
+select = ["F", "E", "W", "I", "UP", "TC"]
 fixable = ["ALL"]
 unfixable = []
 
