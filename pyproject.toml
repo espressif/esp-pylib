@@ -55,6 +55,9 @@ dev = [
   "pre-commit",
   "czespressif",
 ]
+test = [
+  "pytest",
+]
 
 [tool.ruff]
 line-length = 120
