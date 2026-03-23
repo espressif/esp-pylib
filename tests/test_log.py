@@ -208,6 +208,89 @@ class TestDie:
         mock_exit.assert_called_once_with(1)
 
 
+class TestCallSiteReporting:
+    """Verify the file/line reported to the IDE WebSocket points at the user's caller,
+    even when err/warn are reached via internal helpers like die().
+
+    These tests force ``is_enabled()`` to True so the call-site lookup happens; in real CLI
+    usage the lookup is skipped (see :class:`TestSkipCallSiteWhenIdeDisabled`).
+    """
+
+    def test_err_reports_direct_caller(self):
+        EspLog._reset()
+        with patch('sys.stderr', StringIO()), patch('esp_pylib.logger._ws_is_enabled', return_value=True), patch(
+            'esp_pylib.logger.send_log_message'
+        ) as mock_send:
+            logger = EspLog()
+            logger.err('boom')
+            expected_line = sys._getframe().f_lineno - 1
+        mock_send.assert_called_once()
+        _typ, _msg, _suggestion, file, line = mock_send.call_args[0]
+        assert file == __file__
+        assert line == expected_line
+
+    def test_warn_reports_direct_caller(self):
+        EspLog._reset()
+        with patch('sys.stderr', StringIO()), patch('esp_pylib.logger._ws_is_enabled', return_value=True), patch(
+            'esp_pylib.logger.send_log_message'
+        ) as mock_send:
+            logger = EspLog()
+            logger.warn('careful')
+            expected_line = sys._getframe().f_lineno - 1
+        mock_send.assert_called_once()
+        _typ, _msg, _suggestion, file, line = mock_send.call_args[0]
+        assert file == __file__
+        assert line == expected_line
+
+    def test_die_reports_user_caller_not_die_method(self):
+        """Regression: die() calls err(); call site must be the user's die() call,
+        not the err() call inside die() in logger.py."""
+        EspLog._reset()
+        with patch('sys.stderr', StringIO()), patch.object(sys, 'exit'), patch(
+            'esp_pylib.logger._ws_is_enabled', return_value=True
+        ), patch('esp_pylib.logger.send_log_message') as mock_send:
+            logger = EspLog()
+            logger.die('fatal')
+            expected_line = sys._getframe().f_lineno - 1
+        mock_send.assert_called_once()
+        _typ, _msg, _suggestion, file, line = mock_send.call_args[0]
+        assert file == __file__, f'Expected test file, got {file} (likely points into logger.py)'
+        assert line == expected_line
+
+
+class TestSkipCallSiteWhenIdeDisabled:
+    """Plain CLI usage (no IDE WebSocket configured) must not pay the cost of stack walking
+    or build a payload that ``send_log_message`` would immediately discard."""
+
+    def test_warn_skips_call_site_and_send_when_disabled(self):
+        EspLog._reset()
+        with patch('sys.stderr', StringIO()), patch(
+            'esp_pylib.logger._ws_is_enabled', return_value=False
+        ) as mock_enabled, patch('esp_pylib.logger.send_log_message') as mock_send, patch.object(
+            EspLog, '_get_call_site'
+        ) as mock_callsite:
+            logger = EspLog()
+            logger.warn('careful')
+
+        mock_enabled.assert_called_once()
+        mock_callsite.assert_not_called()
+        mock_send.assert_not_called()
+
+    def test_err_skips_call_site_and_send_when_disabled(self):
+        EspLog._reset()
+        with patch('sys.stderr', StringIO()), patch(
+            'esp_pylib.logger._ws_is_enabled', return_value=False
+        ) as mock_enabled, patch('esp_pylib.logger.send_log_message') as mock_send, patch.object(
+            EspLog, '_get_call_site'
+        ) as mock_callsite:
+            logger = EspLog()
+            logger.err('boom')
+
+        mock_enabled.assert_called_once()
+        mock_callsite.assert_not_called()
+        mock_send.assert_not_called()
+
+
 class TestCaptureLoggerIntegration:
     def test_custom_logger_receives_all_calls(self):
         custom = CaptureLogger()
