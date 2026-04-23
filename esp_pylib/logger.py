@@ -14,16 +14,24 @@ Any consumer tool (esptool, esp-coredump, ...) or integrator can provide
 a custom logger class by subclassing EspLogBase and calling set_logger().
 """
 
+import contextvars
 import sys
+import time
 from abc import ABC
 from abc import abstractmethod
+from contextlib import contextmanager
 from typing import TYPE_CHECKING
+from typing import Any
+from typing import Iterator
 from typing import Optional
 from typing import Tuple
 from typing import Union
 
 from rich.console import Console
+from rich.control import Control
+from rich.control import ControlType
 from rich.markup import escape
+from rich.progress_bar import ProgressBar
 
 from esp_pylib.ws import is_enabled as _ws_is_enabled
 from esp_pylib.ws import send_log_message
@@ -35,8 +43,99 @@ __all__ = [
     'log',
     'EspLogBase',
     'EspLog',
+    'ProgressTask',
     'Verbosity',
 ]
+
+# Current progress output stream for progress_bar() / Rich (None = default stdout).
+_progress_output: 'contextvars.ContextVar[Optional[Any]]' = contextvars.ContextVar(
+    '_progress_output',
+    default=None,
+)
+
+UNICODE_PROGRESS_CHAR = '━'
+UNICODE_HALF_PROGRESS_CHAR = '╸'
+
+
+def _format_elapsed(seconds: float) -> str:
+    if seconds < 60.0:
+        return f'{int(seconds)}s'
+    mins, secs = divmod(int(seconds), 60)
+    return f'{mins}:{secs:02d}'
+
+
+class ProgressTask:
+    """
+    Stateful progress tracker used by :meth:`EspLogBase.progress`.
+    Each :meth:`update` computes a uniform prefix/suffix and calls
+    :meth:`EspLogBase.progress_bar` so subclasses can override rendering.
+    """
+
+    __slots__ = ('_bar_length', '_current', '_description', '_disabled', '_logger', '_start', '_total')
+
+    def __init__(
+        self,
+        logger: 'EspLogBase',
+        total: int,
+        description: str,
+        bar_length: int,
+        disabled: bool,
+    ) -> None:
+        self._logger = logger
+        self._total = total
+        self._current = 0
+        self._description = description
+        self._bar_length = bar_length
+        self._disabled = disabled
+        self._start = time.monotonic()
+
+    def update(self, advance: int = 1, description: Optional[str] = None) -> None:
+        if self._disabled:
+            return
+        if self._total <= 0:
+            return
+        if description is not None:
+            self._description = description
+        # Clamp to [0, total]: callers may pass negative ``advance`` to rewind,
+        # but the bar should never go past either bound.
+        self._current = max(0, min(self._current + advance, self._total))
+        # Skip the redraw when nothing observable changed (advance == 0 and no
+        # new description) to avoid pointless terminal flicker.
+        if advance != 0 or description is not None:
+            self._emit()
+
+    def _emit_initial(self) -> None:
+        """Render the bar immediately on context entry.
+
+        Mirrors ``rich.Progress.start()`` + ``add_task()`` which draws the bar
+        before any work is done. Important when ``total == 0``: without this,
+        an empty work loop would never call :meth:`update` and the bar would
+        never appear.
+        """
+        if self._disabled:
+            return
+        self._emit()
+
+    def _emit(self) -> None:
+        elapsed = time.monotonic() - self._start
+        time_str = _format_elapsed(elapsed)
+        prefix = f'{self._description} ' if self._description else ''
+        # Keep the M/N format consistent with the non-zero case ("0/0" when total == 0).
+        suffix = f' {self._current}/{self._total} [{time_str}]'
+        self._logger.progress_bar(
+            self._current,
+            self._total,
+            prefix=prefix,
+            suffix=suffix,
+            bar_length=self._bar_length,
+        )
+
+    def _ensure_complete(self) -> None:
+        if self._disabled or self._total <= 0:
+            return
+        if self._current < self._total:
+            self._current = self._total
+            self._emit()
 
 
 class VerbosityMeta(type):
@@ -104,6 +203,58 @@ class EspLogBase(ABC):
         """Set verbosity to Verbosity or convert string to Verbosity."""
         pass
 
+    @abstractmethod
+    def progress_bar(
+        self,
+        cur_iter: int,
+        total_iters: int,
+        prefix: str = '',
+        suffix: str = '',
+        bar_length: int = 30,
+    ) -> None:
+        """Print a progress bar that overwrites itself in place."""
+        pass
+
+    @contextmanager
+    def progress(
+        self,
+        total: int,
+        description: str = '',
+        bar_length: int = 30,
+        *,
+        file: Any = None,
+        disable: bool = False,
+    ) -> Iterator['ProgressTask']:
+        """
+        Context manager that yields a :class:`ProgressTask`.
+
+        Each :meth:`ProgressTask.update` builds a uniform prefix/suffix (including
+        elapsed time and M/N) and calls :meth:`progress_bar` so tool-specific
+        subclasses keep a single rendering hook.
+
+        :param file: Output stream for the bar (default: stdout). Use ``sys.stderr``
+            when stdout must stay clean (e.g. SPDX on stdout).
+        :param disable: If True, :meth:`ProgressTask.update` is a no-op (e.g. ``--no-progress``).
+        """
+        task = ProgressTask(self, total, description, bar_length, disabled=disable)
+        token = _progress_output.set(file)
+        try:
+            # When ``total == 0`` the body's loop won't iterate, so :meth:`update`
+            # would never run and the user would see no bar at all. Render the
+            # initial state here so the "0/0" state is still visible — this
+            # matches the behaviour of ``rich.Progress`` which draws on
+            # ``add_task()``. For ``total > 0`` we leave it to the first
+            # ``update()`` call to keep the existing render cadence intact.
+            if total <= 0:
+                task._emit_initial()
+            yield task
+            # Only finalize the bar to 100% on a clean exit; otherwise an
+            # exception in the body would jump the bar to "done" right before
+            # the traceback, which is misleading.
+            task._ensure_complete()
+        finally:
+            _progress_output.reset(token)
+
 
 class EspLog(EspLogBase):
     """
@@ -124,7 +275,7 @@ class EspLog(EspLogBase):
     _stdout: Console
     _stderr: Console
 
-    def __new__(cls):
+    def __new__(cls, *args, **kwargs):
         if cls.__dict__.get('instance') is None:
             cls.instance = super().__new__(cls)
         return cls.instance
@@ -229,6 +380,133 @@ class EspLog(EspLogBase):
         if _ws_is_enabled():
             file, line = self._get_call_site()
             send_log_message('error', message, suggestion, file, line)
+
+    def _get_interactive_console(self) -> Optional[Console]:
+        """Return a Console for in-place overwrite, or None for non-interactive output."""
+        pf = _progress_output.get()
+        if pf is sys.stderr:
+            if self._stderr.is_terminal:
+                return self._stderr
+            return None
+        if pf is not None and pf is not sys.stdout:
+            try:
+                if hasattr(pf, 'isatty') and pf.isatty():
+                    return Console(file=pf, no_color=self.no_color, highlight=False, emoji=False)
+            except (AttributeError, ValueError, OSError):
+                # ``isatty()`` raises ValueError on closed streams, AttributeError
+                # on non-stream objects, OSError on detached fds. Treat all as
+                # "not a TTY" rather than letting them crash logging.
+                pass
+            return None
+        if self._stdout.is_terminal:
+            return self._stdout
+        return None
+
+    def _get_progress_print_file(self) -> Any:
+        """Stream used for progress when not using ``_stdout`` / ``_stderr`` Consoles."""
+        pf = _progress_output.get()
+        return sys.stdout if pf is None else pf
+
+    def _progress_console_for_stream(self, file: Any) -> Console:
+        """Console for rendering :class:`~rich.progress_bar.ProgressBar` on an arbitrary stream."""
+        return Console(file=file, no_color=self.no_color, highlight=False, emoji=False)
+
+    @staticmethod
+    def _render_plain_bar(completed: int, total: int, width: int) -> str:
+        """Render a fixed-width progress bar using UNICODE_PROGRESS_CHAR and spaces.
+
+        Used when the active console can't render a dim background bar
+        (``no_color=True`` or no ``color_system``). Rich's
+        :class:`~rich.progress_bar.ProgressBar` only emits characters for the
+        completed portion in that case, which makes the bar grow from 0 to
+        ``width`` characters and shifts the suffix between redraws. Padding
+        the trailing portion with spaces keeps the suffix in the same column
+        on every update so only the bar fills in.
+        """
+        if width <= 0:
+            return ''
+        if total <= 0 or completed >= total:
+            return UNICODE_PROGRESS_CHAR * width
+        completed = max(0, completed)
+        # Match Rich's half-step behaviour (UNICODE_HALF_PROGRESS_CHAR) so the bar advances smoothly.
+        complete_halves = int(width * 2 * completed / total)
+        bar_count, half_bar_count = divmod(complete_halves, 2)
+        bar_str = UNICODE_PROGRESS_CHAR * bar_count + (UNICODE_HALF_PROGRESS_CHAR if half_bar_count else '')
+        return bar_str + ' ' * (width - bar_count - half_bar_count)
+
+    def progress_bar(
+        self,
+        cur_iter: int,
+        total_iters: int,
+        prefix: str = '',
+        suffix: str = '',
+        bar_length: int = 30,
+    ) -> None:
+        """Print progress using Rich :class:`~rich.progress_bar.ProgressBar`.
+
+        When the active console can't render a dim background bar (``no_color``
+        or no ``color_system``) the bar is rendered as a fixed-width plain
+        string (UNICODE_PROGRESS_CHAR for completed, spaces for the rest) so the suffix stays
+        in the same column across redraws.
+        """
+        if self._verbosity == Verbosity.SILENT:
+            return
+        if total_iters < 0:
+            return
+
+        if total_iters == 0:
+            # 0/0 means "nothing to do, already complete". Render a full bar at
+            # 100% — matches ``rich.Progress``.
+            percent = '100.0'
+            is_complete = True
+        else:
+            # Defensive clamp so direct callers (bypassing ProgressTask) can't
+            # render >100% or miss the final newline due to overshoot.
+            cur_iter = max(0, min(cur_iter, total_iters))
+            percent = f'{100 * cur_iter / total_iters:.1f}'
+            is_complete = cur_iter == total_iters
+
+        suffix_part = f' {percent:>5}%{suffix} '
+
+        out = self._get_progress_print_file()
+        interactive = self._get_interactive_console()
+        # In-place redraw on an interactive console; otherwise one full line per update on ``out``.
+        if interactive is not None:
+            c = interactive
+        else:
+            c = self._progress_console_for_stream(out)
+
+        # Pick the bar renderable: Rich's ProgressBar when the console can
+        # shade the trailing portion (so the bar stays at constant width via
+        # the dim background style), otherwise our fixed-width plain renderer.
+        bar_renderable: Any
+        if c.no_color or c.color_system is None:
+            bar_renderable = self._render_plain_bar(cur_iter, total_iters, bar_length)
+        elif total_iters == 0:
+            bar_renderable = ProgressBar(total=1.0, completed=1.0, width=bar_length)
+        else:
+            bar_renderable = ProgressBar(
+                total=float(total_iters),
+                completed=float(cur_iter),
+                width=bar_length,
+            )
+
+        if interactive is not None:
+            end = '\n' if is_complete or self._verbosity == Verbosity.VERBOSE else ''
+            if self._verbosity != Verbosity.VERBOSE:
+                c.print(
+                    Control(ControlType.CARRIAGE_RETURN),
+                    Control((ControlType.ERASE_IN_LINE, 2)),
+                    end='',
+                )
+        else:
+            end = '\n'
+
+        if prefix:
+            c.print(prefix, end='', markup=False, highlight=False)
+        c.print(bar_renderable, suffix_part, sep='', end=end, markup=False, highlight=False)
+        if not end:
+            c.file.flush()
 
 
 class _LogProxy:
