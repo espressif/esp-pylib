@@ -29,7 +29,7 @@ repos:
       - id: ruff-format
 
   - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.20.0
+    rev: 8cd2d4056637e242709fe09f15a36f0b4b682bda  # (1.8.0) latest with Python 3.7 support
     hooks:
       - id: mypy
         additional_dependencies: []
