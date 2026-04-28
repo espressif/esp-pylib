@@ -17,11 +17,19 @@ a custom logger class by subclassing EspLogBase and calling set_logger().
 import sys
 from abc import ABC
 from abc import abstractmethod
+from typing import TYPE_CHECKING
 from typing import Optional
+from typing import Tuple
 from typing import Union
 
 from rich.console import Console
 from rich.markup import escape
+
+from esp_pylib.ws import is_enabled as _ws_is_enabled
+from esp_pylib.ws import send_log_message
+
+if TYPE_CHECKING:
+    from types import FrameType
 
 __all__ = [
     'log',
@@ -110,7 +118,7 @@ class EspLog(EspLogBase):
     stored on that exact class—subclasses get their own singleton.
     """
 
-    instance: Optional['EspLogBase'] = None
+    instance: Optional[EspLogBase] = None
     _verbosity: int = Verbosity.NORMAL
     _initialized: bool = False
     _stdout: Console
@@ -121,7 +129,7 @@ class EspLog(EspLogBase):
             cls.instance = super().__new__(cls)
         return cls.instance
 
-    def __init__(self, no_color: Union[bool, None] = None):
+    def __init__(self, no_color: Optional[bool] = None):
         if not self._initialized:
             self.no_color = no_color
             # Setting emoji to False to avoid interpreting e.g. mac addresses as emojis (":CD:" -> 💿)
@@ -137,7 +145,7 @@ class EspLog(EspLogBase):
         cls._initialized = False
 
     @classmethod
-    def set_logger(cls, instance: 'EspLogBase') -> None:
+    def set_logger(cls, instance: EspLogBase) -> None:
         """
         Replace the global logger singleton with a custom implementation.
 
@@ -150,6 +158,24 @@ class EspLog(EspLogBase):
         if not isinstance(instance, EspLogBase):
             raise TypeError(f'Logger must implement the EspLogBase interface, got {type(instance).__name__!r}')
         cls.instance = instance
+
+    def _get_call_site(self) -> Tuple[str, int]:
+        """Return (file, line) of the first caller outside this logger module.
+
+        Walking the stack (rather than using a fixed index) keeps the reported
+        location correct when err/warn are reached via internal helpers such as
+        ``die()`` — or any future wrapper — that would otherwise appear as the
+        immediate caller.
+        """
+        this_file = __file__
+        if this_file.endswith(('.pyc', '.pyo')):
+            this_file = this_file[:-1]
+        frame: Optional[FrameType] = sys._getframe(1)
+        while frame is not None:
+            if frame.f_code.co_filename != this_file:
+                return (frame.f_code.co_filename, frame.f_lineno)
+            frame = frame.f_back
+        return ('<unknown>', 0)
 
     def set_verbosity(self, mode: Union[int, str]) -> None:
         if isinstance(mode, str):
@@ -189,7 +215,10 @@ class EspLog(EspLogBase):
         """
         if self._verbosity != Verbosity.SILENT:
             self.print(f'[bold yellow]WARNING:[/bold yellow] {message}', file=sys.stderr)
-        # ... IDE send_log_message('warning', message, suggestion, file, line) ...
+        # Skip stack walking in plain CLI usage where send_log_message would no-op anyway.
+        if _ws_is_enabled():
+            file, line = self._get_call_site()
+            send_log_message('warning', message, suggestion, file, line)
 
     def err(self, message: str, suggestion: Optional[str] = None) -> None:
         """Error message (red, bold) to STDERR.
@@ -197,7 +226,9 @@ class EspLog(EspLogBase):
         Suggestions are only passed to websocket clients, not to the console.
         """
         self.print(f'[bold #CC3311]ERROR:[/bold #CC3311] {message}', file=sys.stderr)
-        # ... IDE send_log_message('error', message, suggestion, file, line) ...
+        if _ws_is_enabled():
+            file, line = self._get_call_site()
+            send_log_message('error', message, suggestion, file, line)
 
 
 class _LogProxy:

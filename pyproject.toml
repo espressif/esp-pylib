@@ -55,6 +55,9 @@ dev = [
   "pre-commit",
   "czespressif",
 ]
+ide = [
+  "websockets>=12.0; python_version >= '3.8'",
+]
 test = [
   "pytest",
 ]
