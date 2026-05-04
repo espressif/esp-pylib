@@ -61,6 +61,10 @@ ide = [
 serial = [
   "pyserial>=3.3",
 ]
+cli = [
+  "rich-click>=1.7,<2",
+  "click>=8.0,<9",
+]
 test = [
   "pytest",
 ]
