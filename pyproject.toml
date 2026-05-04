@@ -58,6 +58,9 @@ dev = [
 ide = [
   "websockets>=12.0; python_version >= '3.8'",
 ]
+serial = [
+  "pyserial>=3.3",
+]
 test = [
   "pytest",
 ]
