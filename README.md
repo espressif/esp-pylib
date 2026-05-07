@@ -38,7 +38,7 @@ pip install esp-pylib[cli]
 - **`esp_pylib.ws`** — WebSocket client for IDE integration: sends structured JSON when an IDE sets the environment variable below. Requires `pip install esp-pylib[ide]` (pulls in `websockets`; effectively a no-op on Python 3.7 — see Installation note above). The connection is created lazily on first use; if no URL is set, log helpers no-op.
 - **`esp_pylib.excepthook`** — Hooks (`sys.excepthook` and `threading.excepthook`, Python 3.8+) to report uncaught exceptions to the IDE over the same WebSocket channel, then chain to the previous hooks so normal stderr behavior is unchanged. Use together with `esp-pylib[ide]`.
 - **`esp_pylib.serial_ports`** — Serial port discovery, filtering, and sorting. Wraps pyserial's `comports()` with Espressif-aware priority. Exposes `get_port_list`, `get_port_names`, `detect_port`, `get_port_vid_pid`, and `parse_port_filters` (for `key=value` CLI flags like `vid=0x303A`). Requires `pip install esp-pylib[serial]`.
-- **`esp_pylib.serial_reset`** — DTR/RTS primitives and named reset sequences shared between `esptool` and `esp-idf-monitor`. Primitives: `set_dtr`, `set_rts`, `set_dtr_rts`, `set_hupcl`. Sequences: `classic_bootloader_reset`, `unix_tight_bootloader_reset`, `usb_jtag_bootloader_reset`, `hard_reset` — each takes `flow_control=True` for adapters with always-on hardware flow control (e.g. the SiLabs CP2102C). `uses_hardware_flow_control((vid, pid))` decides that flag against the shared `HARDWARE_FLOW_CONTROL_VID_PIDS` list in `esp_pylib.constants`. Also includes a parser/executor for custom reset sequences in the `D0|R1|U1,0|W0.1` format. Requires `pip install esp-pylib[serial]`.
+- **`esp_pylib.serial_reset`** — DTR/RTS primitives and named reset sequences shared between `esptool` and `esp-idf-monitor`. Primitives: `set_dtr`, `set_rts`, `set_dtr_rts`. Sequences: `classic_bootloader_reset`, `unix_tight_bootloader_reset`, `usb_jtag_bootloader_reset`, `hard_reset` — each takes `flow_control=True` for adapters with always-on hardware flow control (e.g. the SiLabs CP2102C). `uses_hardware_flow_control((vid, pid))` decides that flag against the shared `HARDWARE_FLOW_CONTROL_VID_PIDS` list in `esp_pylib.constants`. Also includes a parser/executor for custom reset sequences in the `D0|R1|U1,0|W0.1` format. Requires `pip install esp-pylib[serial]`.
 - **`esp_pylib.cli_types`** — Reusable Click `ParamType`s. Exposes `SerialPortType` (pass-through `--port` argument with shell completion backed by `esp_pylib.serial_ports`). Requires `pip install esp-pylib[cli]`.
 
 ### IDE integration (WebSocket)
@@ -151,6 +151,72 @@ class MyLogger(EspLogBase):
 EspLog.set_logger(MyLogger())
 ```
 
+## Migration Skill for AI Coding Agents
+
+This repository ships a tool-agnostic Agent Skill under [`./migrate-to-esp-pylib/`](./migrate-to-esp-pylib/) that walks an AI coding agent through replacing duplicated code in any Espressif Python tool (constants, `FatalError` classes, raw ANSI logging, Python `logging` calls, IDE WebSocket clients, exception hooks, INI config loaders, ROM ELF resolution, port discovery, reset sequences, argparse CLIs) with the matching `esp-pylib` module. Each step is tagged `[Available]` (perform now) or `[Planned]` (skip until the upstream module ships), so the same skill stays useful as `esp-pylib` grows.
+
+The skill is split for progressive disclosure:
+
+- [`migrate-to-esp-pylib/SKILL.md`](./migrate-to-esp-pylib/SKILL.md) — concise entry point: module status table, task checklist, critical rules, and links into the references.
+- [`migrate-to-esp-pylib/references/workflow.md`](./migrate-to-esp-pylib/references/workflow.md) — full per-step instructions, code examples, and backward-compatibility patterns.
+
+### Use it from Cursor
+
+The skill is meant for **consumer-tool repos**, not for day-to-day work in this repository. Two ways to apply it:
+
+- **Reference on demand (simplest):** in the tool repo you are migrating, `@`-mention or attach `migrate-to-esp-pylib/SKILL.md` from a local clone of esp-pylib, a submodule, or a copied `migrate-to-esp-pylib/` directory. Plain prompts that point at the file path work too.
+- **Install once for global auto-invocation:** symlink the skill directory from your esp-pylib checkout into your personal skills folder so Cursor/Claude picks it up across repos and stays in sync when you pull esp-pylib (preferred over copying). Replace `<path-to-esp-pylib>` with the **absolute** path to your clone (relative targets break easily):
+
+  ```bash
+  ln -sfn <path-to-esp-pylib>/migrate-to-esp-pylib ~/.cursor/skills/migrate-to-esp-pylib
+  ln -sfn <path-to-esp-pylib>/migrate-to-esp-pylib ~/.claude/skills/migrate-to-esp-pylib
+  ```
+
+  Example: `ln -sfn ~/Documents/esp-pylib/migrate-to-esp-pylib ~/.cursor/skills/migrate-to-esp-pylib`
+
+  If the symlink is not picked up by Cursor, `@`-mentioning the skill file is the reliable fallback.
+
+### Use it from Other AI Coding Agents
+
+The skill is plain Markdown with YAML frontmatter in `SKILL.md`, so any coding agent that can read repository files works:
+
+- **GitHub Copilot Chat / VS Code:** open `migrate-to-esp-pylib/SKILL.md` (or attach it to the chat) and ask the agent to follow it for the migration; the agent will pull in `references/workflow.md` as it works through the steps.
+- **Claude Code and other agents:** point at `migrate-to-esp-pylib/SKILL.md` (global symlink, submodule, or copy). The root [`AGENTS.md`](./AGENTS.md) here is only for **esp-pylib contributors** keeping the skill in sync — not for running migrations in other repos.
+- **Plain prompt:** paste the contents of `migrate-to-esp-pylib/SKILL.md` into the system prompt or initial message, and provide `references/workflow.md` when the agent reaches the per-step work.
+
+### Keeping the Skill in Sync with New Features
+
+> Required for any public-API change in `esp-pylib`. Failing to update the skill in lockstep with code is a review blocker, because stale `[Planned]` / `[Available]` markers cause agents to either skip shipped features or invent imports for unshipped ones.
+
+When you change anything user-facing in `esp_pylib/`, update these in order — in the same PR as the code change:
+
+1. **Code** — implement and test the change.
+2. **`README.md`** — update the module summary and any code examples affected by the change.
+3. **`migrate-to-esp-pylib/SKILL.md`**:
+   - Flip the affected row in the **Module status** table from `Planned` to `Available` (or vice versa for a removal / deprecation).
+   - Update the matching `[Planned]` / `[Available]` marker on the per-step checklist.
+   - Add new exported names to the frontmatter `description` trigger keywords so the skill router still picks the file up.
+4. **`migrate-to-esp-pylib/references/workflow.md`**:
+   - Replace the placeholder example in the matching workflow step with a concrete, working example. Mirror the layout of the already-`Available` steps (short prose, before/after code, gotchas).
+   - Bump the install pin in **Step 2** if a new minimum is required.
+   - Add backward-compatibility wrapper guidance under "Backward-compatibility patterns" if the new API returns a type that differs from common consumer expectations.
+5. **`CHANGELOG.md`** — do not hand-edit; `cz bump` handles it via the conventional commit message.
+
+What counts as a "public-API change":
+
+| Change                                                                            | Triggers skill update? |
+|-----------------------------------------------------------------------------------|------------------------|
+| New module, function, class, or constant exported via `__all__` or top-level      | Yes                    |
+| Signature change of any exported callable                                         | Yes                    |
+| Behaviour change visible to consumers (default values, error type, output stream) | Yes                    |
+| New optional dependency or extras group                                           | Yes                    |
+| New environment variable read by the library                                      | Yes                    |
+| Internal refactor with identical public surface                                   | No                     |
+| Test-only change                                                                  | No                     |
+| Typo fix in docstring                                                             | No                     |
+
+When in doubt, update the skill — the cost is small and the cost of stale agent guidance is large.
+
 ## How to Contribute
 
 First, set up the development environment:
@@ -163,6 +229,8 @@ source venv/bin/activate
 pip install -e ".[dev]"
 pre-commit install
 ```
+
+When adding a new feature, also update the skill at [`./migrate-to-esp-pylib/`](./migrate-to-esp-pylib/) following the checklist in [Keeping the skill in sync with new features](#keeping-the-skill-in-sync-with-new-features) above. AI coding agents should pick this up from [`AGENTS.md`](./AGENTS.md) in the repo root.
 
 ## How to Release (For Maintainers Only)
 
