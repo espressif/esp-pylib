@@ -21,7 +21,7 @@ pip install esp-pylib[ide]
 
 - **`esp_pylib.constants`** — Single place for cross-tool constants (e.g. Espressif USB VID/PID, default ROM baud rate, serial port name patterns, and Unix `termios` modem-control bits where available).
 - **`esp_pylib.errors`** — A small exception hierarchy (`FatalError` and common subclasses such as `NoSerialPortFoundError`, `ConfigError`) for consistent error handling across tools.
-- **`esp_pylib.logger`** — Shared logging for Espressif Python tools: verbosity levels (`Verbosity`), the default Rich-based singleton (`log` / `EspLog`), and `EspLogBase` so you can plug in a custom implementation via `EspLog.set_logger()`.
+- **`esp_pylib.logger`** — Shared logging for Espressif Python tools: verbosity levels (`Verbosity`), the default Rich-based singleton (`log` / `EspLog`), and `EspLogBase` so you can plug in a custom implementation via `EspLog.set_logger()`. Also provides a progress-bar API (`log.progress(...)` context manager, the `ProgressTask` it yields, and the lower-level `log.progress_bar(...)` rendering hook).
 - **`esp_pylib.ws`** — WebSocket client for IDE integration: sends structured JSON when an IDE sets the environment variable below. Requires `pip install esp-pylib[ide]` (pulls in `websockets`; effectively a no-op on Python 3.7 — see Installation note above). The connection is created lazily on first use; if no URL is set, log helpers no-op.
 - **`esp_pylib.excepthook`** — Hooks (`sys.excepthook` and `threading.excepthook`, Python 3.8+) to report uncaught exceptions to the IDE over the same WebSocket channel, then chain to the previous hooks so normal stderr behavior is unchanged. Use together with `esp-pylib[ide]`.
 
@@ -67,6 +67,30 @@ install_exception_reporting()
 
 This reports uncaught exceptions to the IDE when `ESPRESSIF_IDE_WS` is set (or `set_ws_url()` has been called). `SystemExit` and `KeyboardInterrupt` are not sent. The previous `sys.excepthook` / `threading.excepthook` handlers are always invoked afterward.
 
+### Progress bars
+
+Use the `log.progress(...)` context manager for in-place progress output. It yields a `ProgressTask`; call `update(advance, description=...)` to advance it. The bar overwrites itself on a TTY, falls back to one full line per update on non-TTYs / verbose mode, and is suppressed entirely under `Verbosity.SILENT`.
+
+```python
+from esp_pylib.logger import log
+
+with log.progress(total=len(packages), description='Resolving') as bar:
+    for pkg in packages:
+        do_work(pkg)
+        bar.update(1, description=f'Resolving {pkg.name}')
+```
+
+Optional keyword arguments:
+
+- `file=sys.stderr` — render the bar on stderr (e.g. when stdout must stay clean for machine-readable output like SPDX).
+- `disable=True` — turn the bar into a no-op (e.g. when a tool's `--no-progress` flag is set).
+
+If the body of the `with` block raises, the bar is **not** auto-completed to 100% — you see the last real update before the traceback.
+
+The bar is always rendered at a fixed `bar_length` so the suffix (percent, M/N, elapsed time, …) stays in the same column on every redraw. When the active console can render colors, the unfilled portion uses a dim background bar; when colors are unavailable (`NO_COLOR`, piped output, no detected color system) the unfilled portion is rendered as plain spaces and gets replaced with `━` as progress advances.
+
+For full control over rendering, override `EspLogBase.progress_bar(cur_iter, total_iters, prefix, suffix, bar_length)` in a custom logger. `progress_bar` is **abstract**: every `EspLogBase` subclass must implement it (a no-op body is fine if the logger doesn't render bars).
+
 ### Custom logger
 
 Subclass `EspLogBase`, implement its methods, then register your instance so all code using the shared logger goes through your implementation:
@@ -101,6 +125,11 @@ class MyLogger(EspLogBase):
         if isinstance(mode, str):
             mode = Verbosity[mode.upper()]
         self._verbosity = mode
+
+    def progress_bar(self, cur_iter, total_iters, prefix='', suffix='', bar_length=30):
+        # Render however you like (file, GUI, ...); a no-op is fine if you
+        # don't render progress.
+        pass
 
 
 EspLog.set_logger(MyLogger())
