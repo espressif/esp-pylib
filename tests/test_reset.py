@@ -21,6 +21,7 @@ from esp_pylib.serial_reset import set_dtr_rts
 from esp_pylib.serial_reset import set_rts
 from esp_pylib.serial_reset import unix_tight_bootloader_reset
 from esp_pylib.serial_reset import usb_jtag_bootloader_reset
+from esp_pylib.serial_reset import uses_hardware_flow_control
 
 
 def _make_port():
@@ -121,6 +122,31 @@ class TestSetDTRandRTS:
         port = _make_port()
         with patch.object(reset_mod.os, 'name', 'nt'), pytest.raises(NotImplementedError):
             set_dtr_rts(port, True, True)
+
+
+class TestUsesHardwareFlowControl:
+    """Membership check against :data:`HARDWARE_FLOW_CONTROL_VID_PIDS`."""
+
+    @pytest.mark.parametrize(
+        'vid_pid, expected',
+        [
+            pytest.param((0x10C4, 0xEA64), True, id='cp2102c_flow_control_adapter'),
+            pytest.param((0x303A, 0x1001), False, id='espressif_usb_jtag_serial'),
+            pytest.param((0x10C4, 0xEA60), False, id='cp2102n_no_always_on_flow_control'),
+            pytest.param((0x1A86, 0x7523), False, id='wch_ch340'),
+            pytest.param((0xFFFF, 0xFFFF), False, id='sentinel_unknown_pair'),
+            pytest.param((None, None), False, id='both_components_none'),
+            pytest.param((0x10C4, None), False, id='pid_none_even_with_matching_vid'),
+            pytest.param((None, 0xEA64), False, id='vid_none_even_with_matching_pid'),
+        ],
+    )
+    def test_vid_pid_membership(self, vid_pid, expected):
+        # CP2102C is the original motivating adapter and must be detected.
+        # Everything else — known adapters that aren't flow-control, fully
+        # unknown pairs, and tuples with ``None`` components from a failed
+        # lookup — must return False so the standard reset path stays the
+        # safe default.
+        assert uses_hardware_flow_control(vid_pid) is expected
 
 
 class TestParseCustomResetSequence:
@@ -314,6 +340,25 @@ class TestClassicBootloaderReset:
         sleeps = [v for kind, v in trace if kind == 'sleep']
         assert sleeps == [0.42, 0.07]
 
+    def test_flow_control_skips_trailing_io0_write(self):
+        # Hardware flow-control adapters (e.g. CP2102C) couple CTS to RTS,
+        # so the final ``IO0=HIGH`` DTR write would loop back as an RTS
+        # transition and glitch EN. With ``flow_control=True`` the function
+        # must end the sequence on the ``RTS=HIGH`` write and leave DTR
+        # asserted (PIN_LOW = IO0=LOW).
+        port = _make_port()
+        with patch.object(reset_mod.time, 'sleep') as sleep:
+            trace = _record_sequence(port, sleep)
+            classic_bootloader_reset(port, flow_control=True)
+        assert trace == [
+            ('dtr', PIN_HIGH),
+            ('rts', PIN_LOW),
+            ('sleep', 0.1),
+            ('dtr', PIN_LOW),
+            ('rts', PIN_HIGH),
+            ('sleep', 0.05),
+        ]
+
 
 class TestUnixTightBootloaderReset:
     @pytest.mark.skipif(os.name == 'nt', reason='POSIX-only ioctl path')
@@ -344,6 +389,25 @@ class TestUnixTightBootloaderReset:
         port = _make_port()
         with patch.object(reset_mod.os, 'name', 'nt'), pytest.raises(NotImplementedError):
             unix_tight_bootloader_reset(port)
+
+    @pytest.mark.skipif(os.name == 'nt', reason='POSIX-only ioctl path')
+    def test_flow_control_skips_trailing_io0_writes(self):
+        # In ``flow_control`` mode the trailing ``set_dtr_rts(HIGH, HIGH)``
+        # *and* the trailing ``set_dtr(HIGH)`` safety write must both be
+        # skipped — otherwise the CP2102C-style adapter would propagate
+        # those DTR transitions back as RTS and glitch EN.
+        port = _make_port()
+        port.fileno.return_value = 11
+        with patch.object(reset_mod, 'set_dtr_rts') as set_both, patch.object(reset_mod, 'set_dtr') as set_d:
+            with patch.object(reset_mod.time, 'sleep'):
+                unix_tight_bootloader_reset(port, flow_control=True)
+        assert set_both.call_args_list == [
+            call(port, PIN_HIGH, PIN_HIGH),
+            call(port, PIN_LOW, PIN_LOW),
+            call(port, PIN_HIGH, PIN_LOW),
+            call(port, PIN_LOW, PIN_HIGH),
+        ]
+        set_d.assert_not_called()
 
 
 class TestUsbJtagBootloaderReset:
@@ -407,3 +471,58 @@ class TestHardReset:
         with patch.object(reset_mod.time, 'sleep') as sleep:
             hard_reset(port, hold_delay=0.05, post_release_delay=0)
         assert sleep.call_args_list == [call(0.05)]
+
+    @pytest.mark.parametrize(
+        'has_hupcl, expected_trace',
+        [
+            pytest.param(
+                True,
+                [
+                    ('dtr', PIN_HIGH),
+                    ('rts', PIN_LOW),
+                    ('sleep', 0.1),
+                    ('dtr', PIN_LOW),
+                    ('sleep', 0.1),
+                    ('rts', PIN_HIGH),
+                ],
+                id='posix_hupcl_cleared_dtr_stays_asserted',
+            ),
+            pytest.param(
+                False,
+                [
+                    ('dtr', PIN_HIGH),
+                    ('rts', PIN_LOW),
+                    ('sleep', 0.1),
+                    ('dtr', PIN_LOW),
+                    ('sleep', 0.1),
+                    ('rts', PIN_HIGH),
+                    ('dtr', PIN_HIGH),
+                ],
+                id='windows_fallback_releases_dtr_before_close',
+            ),
+        ],
+    )
+    def test_flow_control_sequence(self, has_hupcl, expected_trace):
+        # The flow-control reset trace branches only on the trailing DTR
+        # release: with HUPCL (POSIX) the kernel keeps the modem lines
+        # quiet on close, so DTR can stay asserted; without HUPCL
+        # (Windows) we release DTR ourselves before close to settle the
+        # reset circuit and stop the CP2102C from dragging EN.
+        port = _make_port()
+        with patch.object(reset_mod, '_set_hupcl', return_value=has_hupcl) as hupcl:
+            with patch.object(reset_mod.time, 'sleep') as sleep:
+                trace = _record_sequence(port, sleep)
+                hard_reset(port, flow_control=True)
+        hupcl.assert_called_once_with(port, False)
+        assert trace == expected_trace
+
+    def test_flow_control_ignores_hold_and_post_release_delays(self):
+        # The flow-control path uses fixed 0.1 waits to match the proven
+        # esptool sequence; user-supplied ``hold_delay`` / ``post_release_delay``
+        # must be ignored so callers can pass the same timings they use for
+        # the standard path without changing reset behaviour.
+        port = _make_port()
+        with patch.object(reset_mod, '_set_hupcl', return_value=True):
+            with patch.object(reset_mod.time, 'sleep') as sleep:
+                hard_reset(port, hold_delay=0.42, post_release_delay=0.99, flow_control=True)
+        assert sleep.call_args_list == [call(0.1), call(0.1)]

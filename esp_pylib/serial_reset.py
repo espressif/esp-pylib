@@ -20,6 +20,8 @@ import time
 from typing import TYPE_CHECKING
 from typing import Any
 
+from esp_pylib.constants import HARDWARE_FLOW_CONTROL_VID_PIDS
+
 # DTR/RTS pin levels follow the active-low convention used across Espressif
 # tools: setting the pin "active" (asserted) drives the line LOW, hence
 # ``PIN_LOW = True``. The naming reflects the *logical* level applied via
@@ -43,6 +45,7 @@ TIOCMSET = None
 TIOCMGET = None
 TIOCM_DTR = None
 TIOCM_RTS = None
+HUPCL = None
 if os.name != 'nt':
     try:
         import termios
@@ -51,6 +54,7 @@ if os.name != 'nt':
         TIOCMGET = termios.TIOCMGET
         TIOCM_DTR = termios.TIOCM_DTR
         TIOCM_RTS = termios.TIOCM_RTS
+        HUPCL = getattr(termios, 'HUPCL', None)
     except (ImportError, AttributeError):
         pass
 
@@ -75,6 +79,7 @@ __all__ = [
     'set_rts',
     'unix_tight_bootloader_reset',
     'usb_jtag_bootloader_reset',
+    'uses_hardware_flow_control',
 ]
 
 
@@ -145,6 +150,36 @@ def set_dtr_rts(port: serial.Serial, dtr: bool = False, rts: bool = False) -> No
     else:
         status &= ~TIOCM_RTS
     fcntl.ioctl(fd, TIOCMSET, struct.pack('I', status))
+
+
+def _set_hupcl(port: serial.Serial, enabled: bool) -> bool:
+    """Set or clear the termios ``HUPCL`` ("hang up on close") flag.
+
+    Hardware flow-control adapters such as the SiLabs CP2102C re-assert RTS
+    when the serial port is closed. Because the CP2102C ties its CTS line to
+    the chip's RTS pin, that final RTS twitch can drag ``EN`` low and reset
+    the ESP32 during shutdown. Clearing ``HUPCL`` keeps the kernel from
+    pulsing the modem-control lines on close, so the chip survives the close
+    cleanly. The flag has no effect on adapters without that coupling, so
+    leave it untouched in normal operation.
+
+    :returns: ``True`` if ``HUPCL`` was successfully written, ``False`` on
+        Windows (no ``termios``) or on POSIX builds that omit
+        :data:`termios.HUPCL`. Callers use the return value to decide
+        whether a platform fallback is needed — typically deasserting DTR
+        manually before close, which is how the CP2102C hard reset path on
+        Windows compensates for the missing ``HUPCL`` knob.
+    """
+    if os.name == 'nt' or HUPCL is None:
+        return False
+    fd = port.fileno()
+    attrs = termios.tcgetattr(fd)
+    if enabled:
+        attrs[2] |= HUPCL
+    else:
+        attrs[2] &= ~HUPCL
+    termios.tcsetattr(fd, termios.TCSANOW, attrs)
+    return True
 
 
 def parse_custom_reset_sequence(seq_str: str) -> list[dict[str, Any]]:
@@ -234,6 +269,16 @@ def execute_custom_reset(port: serial.Serial, seq_str: str) -> None:
             raise ValueError(f'Unknown step kind in parsed sequence: {kind!r}.')
 
 
+def uses_hardware_flow_control(vid_pid: tuple[int | None, int | None]) -> bool:
+    """Return ``True`` if ``vid_pid`` belongs to a hardware-flow-control adapter.
+
+    Decides whether the reset sequences should run in their ``flow_control=True``
+    variant — i.e. whether the adapter behaves like a SiLabs CP2102C and
+    couples CTS to the chip's RTS.
+    """
+    return vid_pid in HARDWARE_FLOW_CONTROL_VID_PIDS
+
+
 # ---------------------------------------------------------------------------
 # Named reset sequences
 #
@@ -252,6 +297,7 @@ def classic_bootloader_reset(
     port: serial.Serial,
     enter_boot_delay: float = 0.1,
     reset_delay: float = DEFAULT_RESET_DELAY,
+    flow_control: bool = False,
 ) -> None:
     """Sequential DTR/RTS bootloader reset (the historical, portable sequence).
 
@@ -267,6 +313,11 @@ def classic_bootloader_reset(
     :param reset_delay: Time after releasing EN before deasserting IO0.
         Default :data:`DEFAULT_RESET_DELAY` (``0.05``) matches esptool.
         esp-idf-monitor passes ``chip_config['enter_boot_unset']``.
+    :param flow_control: Set ``True`` for adapters with always-on hardware
+        flow control (e.g. the SiLabs CP2102C). Those adapters wire CTS to
+        the chip's RTS, so toggling DTR after the chip has booted would
+        re-trigger RTS on incoming UART data and glitch ``EN`` low. The
+        trailing ``IO0=HIGH`` write is therefore skipped in that mode.
     """
     set_dtr(port, PIN_HIGH)  # IO0=HIGH
     set_rts(port, PIN_LOW)  # EN=LOW, chip in reset
@@ -274,13 +325,15 @@ def classic_bootloader_reset(
     set_dtr(port, PIN_LOW)  # IO0=LOW
     set_rts(port, PIN_HIGH)  # EN=HIGH, chip out of reset
     time.sleep(reset_delay)
-    set_dtr(port, PIN_HIGH)  # IO0=HIGH, done
+    if not flow_control:
+        set_dtr(port, PIN_HIGH)  # IO0=HIGH, done
 
 
 def unix_tight_bootloader_reset(
     port: serial.Serial,
     enter_boot_delay: float = 0.1,
     reset_delay: float = DEFAULT_RESET_DELAY,
+    flow_control: bool = False,
 ) -> None:
     """Atomic-DTR/RTS bootloader reset for POSIX systems.
 
@@ -288,6 +341,11 @@ def unix_tight_bootloader_reset(
     both modem-control bits in a single syscall, avoiding the brief invalid
     pin pairs that the sequential :func:`classic_bootloader_reset` walks
     through. This is the recommended entry path on Linux/macOS.
+
+    :param flow_control: Set ``True`` for adapters with always-on hardware
+        flow control (e.g. the SiLabs CP2102C). See
+        :func:`classic_bootloader_reset` for why the trailing ``IO0=HIGH``
+        writes are skipped in that mode.
 
     :raises NotImplementedError: when called on Windows (no ``ioctl``).
         Tools should fall back to :func:`classic_bootloader_reset` there.
@@ -298,10 +356,12 @@ def unix_tight_bootloader_reset(
     time.sleep(enter_boot_delay)
     set_dtr_rts(port, PIN_LOW, PIN_HIGH)  # IO0=LOW & EN=HIGH, chip out of reset
     time.sleep(reset_delay)
-    set_dtr_rts(port, PIN_HIGH, PIN_HIGH)  # IO0=HIGH, done
-    # Some hubs/adapters drop the final IO0 transition; the trailing single-pin
-    # write makes the line state observable and matches the proven esptool path.
-    set_dtr(port, PIN_HIGH)
+    if not flow_control:
+        set_dtr_rts(port, PIN_HIGH, PIN_HIGH)  # IO0=HIGH, done
+        # Some hubs/adapters drop the final IO0 transition; the trailing
+        # single-pin write makes the line state observable and matches the
+        # proven esptool path.
+        set_dtr(port, PIN_HIGH)
 
 
 def usb_jtag_bootloader_reset(port: serial.Serial, settle_delay: float = 0.1) -> None:
@@ -335,6 +395,7 @@ def hard_reset(
     port: serial.Serial,
     hold_delay: float = 0.1,
     post_release_delay: float = 0.0,
+    flow_control: bool = False,
 ) -> None:
     """Pulse ``EN`` low to hard-reset the chip.
 
@@ -346,11 +407,34 @@ def hard_reset(
 
     :param hold_delay: Time ``EN`` is held low. esptool uses ``0.1`` for
         UART bridges and ``0.2`` for chips on the internal USB peripheral;
-        esp-idf-monitor uses ``chip_config['reset']``.
+        esp-idf-monitor uses ``chip_config['reset']``. Ignored when
+        ``flow_control`` is ``True`` — that path uses fixed ``0.1`` waits
+        to match the proven esptool sequence.
     :param post_release_delay: Extra wait after raising ``EN`` before
         returning. Use ``0.2`` when ``hold_delay`` is the USB ``0.2``;
         leave at ``0.0`` for UART bridges where no re-enumeration is needed.
+        Ignored when ``flow_control`` is ``True``.
+    :param flow_control: Set ``True`` for adapters with always-on hardware
+        flow control (e.g. the SiLabs CP2102C). Those adapters re-assert
+        RTS when the port closes, which can drag ``EN`` low and reset the
+        chip during shutdown. The flow-control path therefore clears the
+        ``HUPCL`` termios flag so the kernel does not pulse the
+        modem-control lines on close, keeps DTR asserted across close so
+        any RTS twitch carries DTR with it, and on Windows (where
+        ``HUPCL`` is unavailable) deasserts DTR before close to settle the
+        reset circuit.
     """
+    if flow_control:
+        has_hupcl = _set_hupcl(port, False)
+        set_dtr(port, PIN_HIGH)  # IO0=HIGH
+        set_rts(port, PIN_LOW)  # EN=LOW
+        time.sleep(0.1)
+        set_dtr(port, PIN_LOW)
+        time.sleep(0.1)
+        set_rts(port, PIN_HIGH)  # EN=HIGH
+        if not has_hupcl:
+            set_dtr(port, PIN_HIGH)
+        return
     set_rts(port, PIN_LOW)  # EN=LOW
     time.sleep(hold_delay)
     set_rts(port, PIN_HIGH)  # EN=HIGH, chip out of reset

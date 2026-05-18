@@ -11,9 +11,11 @@ import pytest
 from esp_pylib import serial_ports as ports_mod
 from esp_pylib.constants import ESPRESSIF_VID
 from esp_pylib.errors import NoSerialPortFoundError
+from esp_pylib.errors import PortVidPidNotFoundError
 from esp_pylib.serial_ports import detect_port
 from esp_pylib.serial_ports import get_port_list
 from esp_pylib.serial_ports import get_port_names
+from esp_pylib.serial_ports import get_port_vid_pid
 from esp_pylib.serial_ports import parse_port_filters
 
 
@@ -263,3 +265,135 @@ class TestParsePortFilters:
         # Only the first '=' splits the key from the value.
         result = parse_port_filters(('serial=A=B=C',))
         assert result['serials'] == ['A=B=C']
+
+
+class TestGetPortVidPid:
+    """Resolve a device path to its USB ``(vid, pid)`` via :func:`comports`.
+
+    Behavioural contract: the function distinguishes "lookup couldn't even
+    proceed" (raise :class:`PortVidPidNotFoundError`) from "found the port
+    but pyserial has no USB metadata for it" (return tuple with ``None``
+    fields). Callers that don't care about the difference can catch the
+    exception and treat both as "unknown".
+    """
+
+    @pytest.mark.parametrize(
+        'lookup, comports_entry, expected',
+        [
+            pytest.param(
+                '/dev/ttyUSB0',
+                FakePort('/dev/ttyUSB0', vid=0x10C4, pid=0xEA64),
+                (0x10C4, 0xEA64),
+                id='linux_cp2102c_adapter',
+            ),
+            pytest.param(
+                '/dev/ttyUSB1',
+                FakePort('/dev/ttyUSB1', vid=ESPRESSIF_VID, pid=0x1001),
+                (ESPRESSIF_VID, 0x1001),
+                id='linux_espressif_usb_jtag',
+            ),
+            pytest.param(
+                'COM3',
+                FakePort('COM3', vid=0x10C4, pid=0xEA64),
+                (0x10C4, 0xEA64),
+                id='windows_com3_canonical_case',
+            ),
+        ],
+    )
+    def test_returns_vid_pid_for_known_port(self, lookup, comports_entry, expected):
+        # Happy path: comports() lists the port verbatim (no platform
+        # rewriting required) and exposes both fields. Locked down for
+        # the three platforms users actually run on.
+        with _patch_comports([comports_entry]):
+            assert get_port_vid_pid(lookup) == expected
+
+    def test_raises_when_port_not_in_comports(self):
+        # The device path is well-formed but ``comports()`` doesn't list it
+        # (unplugged device, sandboxed process, stale config). The "not
+        # listed" message points users at the most likely cause without
+        # forcing them to read the source.
+        with _patch_comports([FakePort('/dev/ttyUSB1', vid=0x1, pid=0x2)]):
+            with pytest.raises(PortVidPidNotFoundError, match='not listed by pyserial'):
+                get_port_vid_pid('/dev/ttyUSB0')
+
+    @pytest.mark.parametrize(
+        'port_name',
+        ['rfc2217://host:2217', 'socket://192.168.0.1:1234'],
+    )
+    def test_raises_for_url_handlers_without_calling_comports(self, port_name):
+        # pyserial URL handlers (e.g. ``rfc2217://``) are not physical USB
+        # devices — short-circuit with a dedicated message instead of paying
+        # for a comports() walk and risking a substring false-positive.
+        with _patch_comports([FakePort('/dev/ttyUSB0', vid=0x1, pid=0x2)]) as comports:
+            with pytest.raises(PortVidPidNotFoundError, match='only COM\\* and /dev/\\* ports'):
+                get_port_vid_pid(port_name)
+        comports.assert_not_called()
+
+    @pytest.mark.parametrize('port_name', [None, ''])
+    def test_raises_for_empty_or_none_input(self, port_name):
+        # Callers occasionally pass ``port.port`` straight in; pyserial can
+        # leave that as None on an unconfigured Serial. Raise loudly rather
+        # than silently returning a useless tuple so the bug surfaces.
+        with pytest.raises(PortVidPidNotFoundError, match='no port name provided'):
+            get_port_vid_pid(port_name)
+
+    def test_error_message_quotes_the_offending_port(self):
+        # The repr-quoted port name in the message makes log scraping
+        # unambiguous (no confusion if the path contains spaces or
+        # parentheses on Windows).
+        with _patch_comports([]):
+            with pytest.raises(PortVidPidNotFoundError, match=r"'/dev/ttyWeird path'"):
+                get_port_vid_pid('/dev/ttyWeird path')
+
+    def test_resolves_dev_symlink_before_lookup(self):
+        # ``/dev/`` is conventionally full of udev symlinks (``/dev/esp0`` ->
+        # ``/dev/ttyUSB0``), but pyserial's comports() reports the real
+        # device. We must follow the symlink before matching.
+        fake = [FakePort('/dev/ttyUSB0', vid=0xABCD, pid=0x0001)]
+        with _patch_comports(fake):
+            with patch.object(ports_mod.os.path, 'islink', return_value=True):
+                with patch.object(ports_mod.os.path, 'realpath', return_value='/dev/ttyUSB0'):
+                    assert get_port_vid_pid('/dev/esp0') == (0xABCD, 0x0001)
+
+    def test_macos_tty_falls_through_to_cu_device(self):
+        # macOS exposes the same physical port twice: ``/dev/tty.X`` and
+        # ``/dev/cu.X``. Apps use the ``cu`` device for outgoing traffic,
+        # which is what comports() lists; users / udev rules often hand us
+        # the ``tty`` name. Make sure both resolve to the same VID/PID.
+        fake = [FakePort('/dev/cu.usbserial-1410', vid=0x10C4, pid=0xEA64)]
+        with _patch_comports(fake), _patch_platform('darwin'):
+            assert get_port_vid_pid('/dev/tty.usbserial-1410') == (0x10C4, 0xEA64)
+
+    def test_linux_tty_is_not_rewritten_to_cu(self):
+        # The ``tty``->``cu`` fallback is macOS-only; on Linux a ``ttyUSB``
+        # path should be looked up verbatim and *not* match a hypothetical
+        # ``cuUSB`` device (which doesn't exist there). The mismatch must
+        # surface as a raise, not a silent match.
+        fake = [FakePort('/dev/cuUSB0', vid=0x1, pid=0x2)]
+        with _patch_comports(fake), _patch_platform('linux'):
+            with pytest.raises(PortVidPidNotFoundError, match='not listed by pyserial'):
+                get_port_vid_pid('/dev/ttyUSB0')
+
+    def test_returns_none_fields_when_pyserial_lacks_ids(self):
+        # Some virtual ports show up in comports() with vid/pid unset (the
+        # built-in Bluetooth ports on macOS, for instance). The port IS
+        # present — this is a *different* failure mode from "not listed" —
+        # so we return what pyserial gave us instead of raising. Callers
+        # that lump both cases together can ``except PortVidPidNotFoundError``
+        # and inspect ``None`` separately; callers that don't care still get
+        # a tuple they can pass to ``uses_hardware_flow_control`` (which
+        # returns False for any ``None`` component).
+        fake = [FakePort('/dev/ttyUSB0', vid=None, pid=None)]
+        with _patch_comports(fake):
+            assert get_port_vid_pid('/dev/ttyUSB0') == (None, None)
+
+    def test_com_prefix_check_is_case_insensitive(self):
+        # The prefix gate lowercases the input, so a stray ``com3`` from a
+        # config file isn't rejected outright — it just won't match a
+        # canonically-named device, and surfaces as a "not listed" raise
+        # rather than the "unsupported scheme" message. Pin both halves
+        # of that behaviour.
+        with _patch_comports([]) as comports:
+            with pytest.raises(PortVidPidNotFoundError, match='not listed by pyserial'):
+                get_port_vid_pid('com3')
+        comports.assert_called_once()

@@ -12,6 +12,7 @@ extra) get an actionable message instead of a confusing
 
 from __future__ import annotations
 
+import os
 import sys
 from typing import TYPE_CHECKING
 from typing import Any
@@ -21,6 +22,7 @@ from esp_pylib.constants import LINUX_DEVICE_PATTERNS
 from esp_pylib.constants import MACOS_DEVICE_PATTERNS
 from esp_pylib.constants import MACOS_PORT_EXCLUDE_LIST
 from esp_pylib.errors import NoSerialPortFoundError
+from esp_pylib.errors import PortVidPidNotFoundError
 
 try:
     from serial.tools.list_ports import comports as _comports
@@ -36,6 +38,7 @@ __all__ = [
     'detect_port',
     'get_port_list',
     'get_port_names',
+    'get_port_vid_pid',
     'parse_port_filters',
 ]
 
@@ -156,6 +159,63 @@ def detect_port(**filters: Any) -> str:
     # ``port.device`` is typed as ``Any`` because pyserial has no stubs;
     # the explicit ``str(...)`` guarantees the return type and matches the signature.
     return str(ports[0].device)
+
+
+def get_port_vid_pid(port_name: str | None) -> tuple[int | None, int | None]:
+    """Look up the USB ``(VID, PID)`` for ``port_name`` via :func:`comports`.
+
+    Raises :class:`PortVidPidNotFoundError` when the lookup itself can't
+    proceed: empty / missing port name, a pyserial URL handler
+    (``rfc2217://``) which by design has no USB
+    identity, or a well-formed ``COM*`` / ``/dev/*`` path that is not
+    listed by :func:`comports`. Each failure mode carries its own
+    descriptive message so logs can disambiguate them without parsing.
+
+    When the port **is** found, the function returns whatever
+    :func:`comports` reports for ``vid`` / ``pid`` — including ``None``
+    for either or both fields (some virtual / built-in ports show up
+    without USB metadata). That keeps "found but unidentified" distinct
+    from "not present": the former returns a (possibly partial) tuple,
+    the latter raises. Callers that don't care about the difference can
+    catch :class:`PortVidPidNotFoundError` and treat both as "unknown".
+
+    :param port_name: Device path as reported by pyserial (e.g.
+        ``/dev/cu.usbserial-1410`` or ``COM3``).
+    :returns: ``(vid, pid)`` as reported by pyserial; either field may be
+        ``None`` if pyserial doesn't expose USB metadata for that port.
+    :raises PortVidPidNotFoundError: when the port can't be looked up at
+        all (empty name, URL handler, port not listed by :func:`comports`).
+
+    The function performs two platform-specific fix-ups so the lookup
+    matches the device the tool will actually open:
+
+    * ``/dev/`` symlinks are resolved with :func:`os.path.realpath`, since
+      :func:`comports` reports the real device path.
+    * macOS ``/dev/tty.*`` paths fall through to the matching ``/dev/cu.*``
+      device, because outgoing communication on macOS goes through the
+      "call-up" device while users (and udev rules) often hand us the
+      ``tty`` name.
+    """
+    if not port_name:
+        raise PortVidPidNotFoundError('Cannot resolve VID/PID: no port name provided.')
+    if not port_name.lower().startswith(('com', '/dev/')):
+        raise PortVidPidNotFoundError(
+            f'Cannot resolve VID/PID for {port_name!r}: only COM* and /dev/* ports are supported '
+            '(pyserial URL handlers have no USB identity).'
+        )
+    active_port = port_name
+    if active_port.startswith('/dev/') and os.path.islink(active_port):
+        active_port = os.path.realpath(active_port)
+    candidates = [active_port]
+    if sys.platform == 'darwin' and 'tty' in active_port:
+        candidates.append(active_port.replace('tty', 'cu'))
+    for port in _comports():
+        if port.device in candidates:
+            return port.vid, port.pid
+    raise PortVidPidNotFoundError(
+        f'Cannot resolve VID/PID for {port_name!r}: not listed by pyserial. '
+        'The device may be unplugged or hidden from this process.'
+    )
 
 
 def parse_port_filters(values: tuple[str, ...]) -> dict[str, list[Any]]:
