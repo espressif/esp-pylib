@@ -750,11 +750,11 @@ class TestProgressBarNoHighlight:
                     suffix=' 0/0 [5s]',
                 )
         text = out.getvalue()
-        # The numeric tokens we'd expect Rich to colorize must be present plain.
-        assert '100.0%' in text
-        assert '0/0' in text
-        # No SGR foreground/background sequences anywhere in the bar output:
-        # if the highlighter had run, ``100``/``0`` would be wrapped in
-        # ``\x1b[...m`` colour escapes (typically ``38;...``/``48;...``).
-        assert '\x1b[38' not in text
-        assert '\x1b[48' not in text
+        # The numeric span ``100.0% 0/0 [5s]`` must appear as ONE contiguous
+        # substring. Rich's regex highlighter, if it had run, would slice the
+        # numbers out and wrap each with SGR escapes (``\x1b[...m100\x1b[0m``
+        # etc.), breaking this exact substring. The bar itself may still emit
+        # ``\x1b[38;...m`` for its own ``bar.finished`` colour on a real
+        # ``color_system`` — that's the whole point of using ``ProgressBar``
+        # and is unrelated to this regression.
+        assert ' 100.0% 0/0 [5s] ' in text

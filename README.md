@@ -17,13 +17,29 @@ pip install esp-pylib[ide]
 > [!NOTE]
 > **IDE features require Python ≥ 3.8** (because `websockets ≥ 12` does). On Python 3.7, `pip install esp-pylib[ide]` still succeeds but pulls in no `websockets` — `esp_pylib.ws` becomes a no-op: `send_log_message()` returns silently, and `send_event` / `wait_for_event` / `ensure_connected` raise `FatalError`.
 
+Optional **serial port** helpers (port discovery, DTR/RTS reset primitives — pulls in `pyserial`):
+
+```bash
+pip install esp-pylib[serial]
+```
+
+Optional **CLI** helpers (Click parameter types — pulls in `rich-click` and `click`):
+
+```bash
+pip install esp-pylib[cli]
+```
+
 ## Modules
 
-- **`esp_pylib.constants`** — Single place for cross-tool constants (e.g. Espressif USB VID/PID, default ROM baud rate, serial port name patterns, and Unix `termios` modem-control bits where available).
+- **`esp_pylib.constants`** — Cross-tool values shared by multiple modules: Espressif USB VID/PID, default ROM baud rate, and serial port name / exclude patterns used by port discovery.
 - **`esp_pylib.errors`** — A small exception hierarchy (`FatalError` and common subclasses such as `NoSerialPortFoundError`, `ConfigError`) for consistent error handling across tools.
 - **`esp_pylib.logger`** — Shared logging for Espressif Python tools: verbosity levels (`Verbosity`), the default Rich-based singleton (`log` / `EspLog`), and `EspLogBase` so you can plug in a custom implementation via `EspLog.set_logger()`. Also provides a progress-bar API (`log.progress(...)` context manager, the `ProgressTask` it yields, and the lower-level `log.progress_bar(...)` rendering hook).
+- **`esp_pylib.config`** — `ToolConfig` finds, parses, and caches a per-tool INI config file. Search order: env-var override → cwd → OS user-config dir (`~/.config/<tool>/` on POSIX, `~/AppData/Local/<tool>/` on Windows) → home. Files that don't contain the tool's section are silently skipped during search so candidates like `setup.cfg` / `tox.ini` are safe to list. `load()` returns `(ConfigParser, Optional[Path])`; `get(key, fallback)` is a convenience for single-value lookups. Both are cached after the first call; call `reload()` to re-scan. Pure stdlib — no extras required.
 - **`esp_pylib.ws`** — WebSocket client for IDE integration: sends structured JSON when an IDE sets the environment variable below. Requires `pip install esp-pylib[ide]` (pulls in `websockets`; effectively a no-op on Python 3.7 — see Installation note above). The connection is created lazily on first use; if no URL is set, log helpers no-op.
 - **`esp_pylib.excepthook`** — Hooks (`sys.excepthook` and `threading.excepthook`, Python 3.8+) to report uncaught exceptions to the IDE over the same WebSocket channel, then chain to the previous hooks so normal stderr behavior is unchanged. Use together with `esp-pylib[ide]`.
+- **`esp_pylib.serial_ports`** — Serial port discovery, filtering, and sorting. Wraps pyserial's `comports()` with Espressif-aware priority. Exposes `get_port_list`, `get_port_names`, `detect_port`, `get_port_vid_pid`, and `parse_port_filters` (for `key=value` CLI flags like `vid=0x303A`). Requires `pip install esp-pylib[serial]`.
+- **`esp_pylib.serial_reset`** — DTR/RTS primitives and named reset sequences shared between `esptool` and `esp-idf-monitor`. Primitives: `set_dtr`, `set_rts`, `set_dtr_rts`, `set_hupcl`. Sequences: `classic_bootloader_reset`, `unix_tight_bootloader_reset`, `usb_jtag_bootloader_reset`, `hard_reset` — each takes `flow_control=True` for adapters with always-on hardware flow control (e.g. the SiLabs CP2102C). `uses_hardware_flow_control((vid, pid))` decides that flag against the shared `HARDWARE_FLOW_CONTROL_VID_PIDS` list in `esp_pylib.constants`. Also includes a parser/executor for custom reset sequences in the `D0|R1|U1,0|W0.1` format. Requires `pip install esp-pylib[serial]`.
+- **`esp_pylib.cli_types`** — Reusable Click `ParamType`s. Exposes `SerialPortType` (pass-through `--port` argument with shell completion backed by `esp_pylib.serial_ports`). Requires `pip install esp-pylib[cli]`.
 
 ### IDE integration (WebSocket)
 
