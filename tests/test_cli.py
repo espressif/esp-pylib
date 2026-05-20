@@ -1,13 +1,18 @@
 # SPDX-FileCopyrightText: 2026 Espressif Systems (Shanghai) CO LTD
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for esp_pylib.cli_types — SerialPortType."""
+"""Tests for esp_pylib.cli_types."""
 
 from unittest.mock import patch
 
+import pytest
 import rich_click as click
 from click.shell_completion import CompletionItem
 from click.testing import CliRunner
 
+from esp_pylib.cli_types import COMMON_BAUD_RATES
+from esp_pylib.cli_types import AnyIntType
+from esp_pylib.cli_types import AutoSizeType
+from esp_pylib.cli_types import BaudRateType
 from esp_pylib.cli_types import SerialPortType
 
 
@@ -17,6 +22,59 @@ class _FakePort:
         self.description = description
         self.vid = vid
         self.pid = pid
+
+
+class TestAnyIntType:
+    @pytest.mark.parametrize(
+        'value, expected',
+        [
+            ('0xff', 255),
+            ('0b1010', 10),
+            ('0o10', 8),
+            (7, 7),
+        ],
+        ids=['hex', 'binary', 'octal', 'int'],
+    )
+    def test_convert(self, value: str, expected: int):
+        assert AnyIntType().convert(value, None, None) == expected
+
+    def test_invalid_raises_bad_parameter(self):
+        with pytest.raises(click.BadParameter):
+            AnyIntType().convert('not-a-number', None, None)
+
+
+class TestAutoSizeType:
+    @pytest.mark.parametrize(
+        'value, expected',
+        [
+            ('4k', 4 * 1024),
+            ('2M', 2 * 1024 * 1024),
+        ],
+        ids=['k', 'M'],
+    )
+    def test_convert(self, value: str, expected: int):
+        assert AutoSizeType().convert(value, None, None) == expected
+
+    def test_all_when_allowed(self):
+        assert AutoSizeType(allow_all=True).convert('all', None, None) == 'all'
+
+    def test_all_disallowed_parses_as_integer(self):
+        with pytest.raises(click.BadParameter):
+            AutoSizeType(allow_all=False).convert('all', None, None)
+
+
+class TestBaudRateType:
+    def test_convert_decimal(self):
+        assert BaudRateType().convert('115200', None, None) == 115200
+
+    def test_shell_complete_filters_by_incomplete_prefix(self):
+        items = BaudRateType().shell_complete(None, None, '115')
+        assert all(isinstance(i, CompletionItem) for i in items)
+        assert {i.value for i in items} == {'115200'}
+
+    def test_shell_complete_empty_prefix_lists_all_rates(self):
+        items = BaudRateType().shell_complete(None, None, '')
+        assert {i.value for i in items} == {str(b) for b in COMMON_BAUD_RATES}
 
 
 class TestSerialPortType:
