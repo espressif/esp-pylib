@@ -1,6 +1,6 @@
 ---
 name: migrate-to-esp-pylib
-description: Migrates Espressif Python tools to the shared esp-pylib library. Use when the user explicitly asks to migrate to esp-pylib, replace duplicated code (FatalError, logging, progress bars, IDE WebSocket, INI config, serial port discovery, DTR/RTS reset primitives, named reset sequences, Click ParamTypes and Click option classes), convert argparse CLIs to rich-click, or remove dependencies superseded by an esp_pylib.* module.
+description: Migrates Espressif Python tools to the shared esp-pylib library. Use when the user explicitly asks to migrate to esp-pylib, replace duplicated code (FatalError, logging, progress bars, IDE WebSocket, INI config, ROM ELF resolution, serial port discovery, DTR/RTS reset primitives, named reset sequences, Click ParamTypes and Click option classes), convert argparse CLIs to rich-click, or remove dependencies superseded by an esp_pylib.* module.
 ---
 
 # Migrate a Tool to esp-pylib
@@ -21,7 +21,7 @@ description: Migrates Espressif Python tools to the shared esp-pylib library. Us
 | `esp_pylib.serial_reset` | Available | Duplicated DTR/RTS primitives, named reset sequences, hardware-flow-control reset paths, custom-sequence parser |
 | `esp_pylib.cli_types`    | Available | `SerialPortType`, `AnyIntType`, `AutoSizeType`, `BaudRateType`, `arg_auto_int()`                                |
 | `esp_pylib.cli_options`  | Available | `EspRichGroup`, `MutuallyExclusiveOption`, `OptionEatAll`                                                       |
-| `esp_pylib.rom`          | Planned   | Duplicated ROM ELF resolution                                                                                   |
+| `esp_pylib.rom`          | Available | Duplicated ROM ELF resolution                                                                                   |
 
 `esp_pylib.serial_reset` ships the low-level pin primitives, the four named reset sequences shared between `esptool` and `esp-idf-monitor` (each with an opt-in `flow_control=True` mode for hardware-flow-control adapters), and the custom-sequence parser/executor. The *strategy-selection* layer above the sequences (which sequence to run for a given chip + connection mode, retry orchestration, `--before` / `--after` plumbing) stays in each tool — see [Step 10](references/workflow.md#step-10-replace-reset-primitives--sequences).
 
@@ -40,7 +40,7 @@ Task Progress:
 - [ ] Step 5: Replace logging / output (incl. progress) [Available]
 - [ ] Step 6: Wire up IDE WebSocket + exception hooks   [Available]
 - [ ] Step 7: Replace config loader                     [Available]
-- [ ] Step 8: Replace ROM ELF resolution                [Planned]
+- [ ] Step 8: Replace ROM ELF resolution                [Available]
 - [ ] Step 9: Replace serial port logic                 [Available]
 - [ ] Step 10: Replace reset primitives + sequences     [Available]
 - [ ] Step 11: Replace local WebSocket client           [Available]
@@ -60,7 +60,7 @@ Task Progress:
 | 5 | [Logging / output](references/workflow.md#step-5-replace-logging--output) |
 | 6 | [IDE WebSocket + excepthook](references/workflow.md#step-6-wire-up-ide-websocket--exception-hooks) |
 | 7 | [Config loader](references/workflow.md#step-7-replace-config-loader) |
-| 8 | [ROM ELF — Planned](references/workflow.md#step-8-replace-rom-elf-resolution--planned) |
+| 8 | [ROM ELF](references/workflow.md#step-8-replace-rom-elf-resolution) |
 | 9 | [Serial ports](references/workflow.md#step-9-replace-serial-port-logic) |
 | 10 | [Reset sequences](references/workflow.md#step-10-replace-reset-primitives--sequences) |
 | 11 | [WebSocket client](references/workflow.md#step-11-replace-local-websocket-client) |
