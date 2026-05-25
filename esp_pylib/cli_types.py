@@ -5,20 +5,109 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+from typing import Any
 
-# rich_click wraps click and re-exports its API, giving us consistent
-# ``--help`` styling. Click is imported indirectly through rich_click —
-# no separate ``import click`` needed.
 import rich_click as click
 from click.shell_completion import CompletionItem
 
 if TYPE_CHECKING:
-    from typing import Any
-
     from click import Context
     from click import Parameter
 
-__all__ = ['SerialPortType']
+__all__ = [
+    'AnyIntType',
+    'AutoSizeType',
+    'BaudRateType',
+    'SerialPortType',
+    'arg_auto_int',
+]
+
+# Baud rates offered in shell completion (decimal strings).
+COMMON_BAUD_RATES = (9600, 115200, 230400, 460800, 576000, 921600)
+
+
+def arg_auto_int(x: str) -> int:
+    """Parse an integer literal in decimal, hex (``0x``), octal, or binary form."""
+    return int(x, 0)
+
+
+class AnyIntType(click.ParamType):
+    """Parse integers in any base (decimal, hex, octal, binary)."""
+
+    name = 'integer'
+
+    def convert(
+        self,
+        value: str | int,
+        param: Parameter | None,
+        ctx: Context | None,
+    ) -> int:
+        if isinstance(value, int):
+            return value
+        try:
+            return arg_auto_int(value)
+        except ValueError:
+            raise click.BadParameter(f'{value!r} is not a valid integer.')
+
+
+class AutoSizeType(AnyIntType):
+    """Like :class:`AnyIntType` but accepts ``k`` / ``M`` suffixes and optionally ``all``.
+
+    Suffixes use binary kilo (1024) and mega (1024²). When ``allow_all`` is
+    True (default), the literal string ``all`` is returned unchanged for
+    callers that resolve size at runtime (e.g. whole-flash reads).
+    """
+
+    def __init__(self, allow_all: bool = True):
+        self.allow_all = allow_all
+        super().__init__()
+
+    def convert(
+        self,
+        value: str | int,
+        param: Parameter | None,
+        ctx: Context | None,
+    ) -> Any:
+        if isinstance(value, int):
+            return value
+        if self.allow_all and value.lower() == 'all':
+            return value
+        if len(value) > 1 and value[-1] in ('k', 'M'):
+            try:
+                num = arg_auto_int(value[:-1])
+            except ValueError:
+                raise click.BadParameter(f'{value!r} is not a valid integer.')
+            if value[-1] == 'k':
+                num *= 1024
+            elif value[-1] == 'M':
+                num *= 1024 * 1024
+            return num
+        return super().convert(value, param, ctx)
+
+
+class BaudRateType(click.ParamType):
+    """Serial baud rate with shell completion for common values."""
+
+    name = 'baud-rate'
+
+    def convert(
+        self,
+        value: str,
+        param: Parameter | None,
+        ctx: Context | None,
+    ) -> int:
+        try:
+            return int(value)
+        except ValueError:
+            raise click.BadParameter(f'{value!r} is not a valid baud rate.')
+
+    def shell_complete(
+        self,
+        ctx: Context | None,
+        param: Parameter | None,
+        incomplete: str,
+    ) -> list[CompletionItem]:
+        return [CompletionItem(str(baud)) for baud in COMMON_BAUD_RATES if str(baud).startswith(incomplete)]
 
 
 class SerialPortType(click.ParamType):
@@ -71,14 +160,11 @@ class SerialPortType(click.ParamType):
 
     def shell_complete(
         self,
-        ctx: Context,
-        param: Parameter,
+        ctx: Context | None,
+        param: Parameter | None,
         incomplete: str,
     ) -> list[CompletionItem]:
         try:
-            # Imported lazily so that loading this module never triggers a pyserial
-            # import — ``[cli]`` users without the ``[serial]`` extra still get a
-            # functional ``SerialPortType`` (just without completion candidates).
             from esp_pylib.serial_ports import get_port_list
         except ImportError:
             return []
@@ -86,8 +172,6 @@ class SerialPortType(click.ParamType):
         try:
             ports = get_port_list()
         except Exception:
-            # Completion runs in interactive shells; never surface errors here
-            # (e.g. permission issues enumerating /dev) to the user.
             return []
 
         incomplete_lower = incomplete.lower()

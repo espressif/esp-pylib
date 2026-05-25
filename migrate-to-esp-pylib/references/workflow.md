@@ -22,7 +22,7 @@ Inventory candidates for migration. Look for:
 - Local INI config loader → Step 7.
 - Local serial port enumeration → Step 9.
 - Inline `PIN_LOW` / `PIN_HIGH`, hard-coded reset delays, local `TIOCM*` fallbacks, local copies of `classic_bootloader_reset` / `unix_tight_bootloader_reset` / `usb_jtag_bootloader_reset` / `hard_reset`, per-adapter `flow_control` flags → Step 10.
-- `argparse` (`ArgumentParser`, `add_argument`, subparsers) or a duplicated local Click `SerialPortType` → Step 12 (full CLI conversion + shared types).
+- `argparse` (`ArgumentParser`, `add_argument`, subparsers) or duplicated local Click helpers (`SerialPortType`, `AnyIntType`, `AutoSizeType`, `BaudRateType`, `arg_auto_int`, `MutuallyExclusiveOption`, `OptionEatAll`) → Step 12 (framework conversion + shared `cli_types` / `cli_options`).
 - Tool-specific public APIs that external consumers depend on — these need backward-compat wrappers (see [§ Backward-compatibility patterns](#backward-compatibility-patterns)).
 
 ### Step 2: Add dependency
@@ -33,7 +33,7 @@ In `pyproject.toml` add `esp-pylib` with the smallest extras set matching the st
 "esp-pylib>=X.Y.Z"            # logger / errors / constants / config (pure stdlib)
 "esp-pylib[ide]>=X.Y.Z"       # + websockets (Step 6, Step 11)
 "esp-pylib[serial]>=X.Y.Z"    # + pyserial   (Step 9, Step 10)
-"esp-pylib[cli]>=X.Y.Z"       # + rich-click + click (Step 12 SerialPortType)
+"esp-pylib[cli]>=X.Y.Z"       # + rich-click + click (Step 12 cli_types + cli_options)
 ```
 
 Extras combine: `esp-pylib[ide,serial,cli]>=X.Y.Z`. Bump the pin again whenever a `[Planned]` row flips to `[Available]` and the tool starts depending on the new module. Direct deps on `rich`, `pyserial`, `rich-click`, `click` can be removed once pulled transitively via `esp-pylib`, unless they have special version limitations.
@@ -299,12 +299,13 @@ Delete the local WebSocket client module. In `pyproject.toml`, remove any `webso
 
 Wire format is `{"type": "event", "event": "<name>", ...}`. If the previous client passed list-typed values for fields the new format expects as strings (e.g. `prog`), unpack to one string.
 
-### Step 12: Convert CLI to rich-click — [Partial]
+### Step 12: Convert CLI to rich-click
 
-Step 12 has two parts — do both during a tool migration:
+Step 12 has three parts — do all that apply during a tool migration:
 
-1. **Framework conversion (required):** every consumer-tool *main* CLI must use `rich_click`, not `argparse`. This is an esp-pylib migration goal independent of which shared helpers are available yet.
-2. **Shared helpers (partial today):** adopt `esp_pylib.cli_types` where applicable; wait on `esp_pylib.cli_options` until it ships.
+1. **Framework conversion (required):** every consumer-tool *main* CLI must use `rich_click`, not `argparse`.
+2. **Shared types (`esp_pylib.cli_types`):** replace tool-local `ParamType` copies with the shared exports where the tool has matching options.
+3. **Shared option classes (`esp_pylib.cli_options`):** replace tool-local `MutuallyExclusiveOption` / `OptionEatAll` / `EspRichGroup` copies.
 
 #### A) Convert `argparse` → `rich_click`
 
@@ -350,8 +351,11 @@ Mechanical mapping cheatsheet:
 | `action='store_true'` | `is_flag=True` |
 | `action='store_false'` (or paired `--foo` / `--no-foo`) | `@click.option('--foo/--no-foo', default=True)` (idiomatic boolean pair); fallback: `is_flag=True, default=True` + invert help text |
 | `action='count'` (e.g. `-d` / `--debug`) | `count=True` on the option; map levels with `log.set_verbosity()` instead of ad-hoc `logging` level tables |
-| `nargs='+'` / `'*'` | `nargs=-1` or `multiple=True` (semantics differ — verify in tests) |
-| `type=int` with hex literals | `type=click.IntRange` or a custom `ParamType` (future: `esp_pylib.cli_options.AnyIntType`) |
+| `nargs='+'` on a positional | `nargs=-1` on the argument (semantics differ — verify in tests) |
+| `nargs='*'` on an **option** (values until the next flag) | `cls=OptionEatAll` from `esp_pylib.cli_options` (see § C); plain `multiple=True` is not equivalent |
+| `type=int` with `0x` / `0o` / `0b` literals | `type=AnyIntType()` from `esp_pylib.cli_types` (or `arg_auto_int` in non-Click code) |
+| `type` accepting `4k` / `2M` / `all` sizes | `type=AutoSizeType()` (pass `allow_all=False` when `all` must be rejected) |
+| `add_mutually_exclusive_group()` | `cls=MutuallyExclusiveOption` with reciprocal `exclusive_with=[…]` (see § C) |
 | `choices=[…]` | `type=click.Choice([…], case_sensitive=False)` when case-insensitive matching is required |
 | Runtime entry: `args = parser.parse_args(); main(args)` | `@click.pass_context` + `ctx.obj` to thread shared state through subcommands |
 | Test entry: `parser.parse_args(argv)` | Invoke the Click command via `cli.main(argv, standalone_mode=False)` (re-raises exceptions instead of `SystemExit`) |
@@ -361,25 +365,98 @@ Mechanical mapping cheatsheet:
 
 **Keep plain `click` where required:** ESP-IDF extension entry points that integrate with `idf.py` (e.g. `idf_ext.py` using `idf_component_manager` patterns) stay on `click` — only convert the tool's standalone `argparse` main CLI to `rich_click`.
 
-**Parsing pitfalls (treat as Medium/High in Step 16):** `nargs='*'` vs `multiple=True`, the `--` separator, optional positional arity, and subcommand-default behaviour differ between argparse and Click. Run (or add) CLI tests for every flag combination the tool documents; call out intentional behaviour changes in the migration PR.
+**Parsing pitfalls (treat as Medium/High in Step 16):** option `nargs='*'` vs Click `multiple=True` (use `OptionEatAll` when the tool consumed tokens until the next flag), the `--` separator, optional positional arity, and subcommand-default behaviour differ between argparse and Click. For `OptionEatAll` on a group with subcommands, use `@click.group(cls=EspRichGroup)` (or subclass `EspRichGroup` and call `super().parse_args`) so subcommand names are not swallowed as option values. Run (or add) CLI tests for every flag combination the tool documents; call out intentional behaviour changes in the migration PR.
 
 **Dependencies:** add `esp-pylib[cli]` (pulls `rich-click` + `click`). Drop a direct `argparse` dependency only if nothing else in the repo still imports it.
 
-#### B) Adopt shared Click types — partial
+#### B) Adopt shared Click types (`esp_pylib.cli_types`)
 
-`esp_pylib.cli_types` ships `SerialPortType` today (requires `[cli]` extra). Replace any tool-local copy and use it for every `--port` / serial device option:
+Requires `esp-pylib[cli]`. Replace any tool-local `ParamType` / `arg_auto_int` copy with the matching export:
+
+| Export | Typical use |
+|--------|-------------|
+| `SerialPortType` | `--port` / serial device path |
+| `AnyIntType` | Addresses, offsets, register values (`0x`, `0o`, `0b` literals) |
+| `AutoSizeType` | Flash/read sizes with `k` / `M` suffixes; optional literal `all` |
+| `BaudRateType` | `--baud` with shell completion for common rates |
+| `arg_auto_int` | Non-Click parsing of the same integer literal rules |
 
 ```python
 import rich_click as click
-from esp_pylib.cli_types import SerialPortType
+from esp_pylib.cli_types import (
+    AnyIntType,
+    AutoSizeType,
+    BaudRateType,
+    SerialPortType,
+)
 
 @click.option('--port', '-p', type=SerialPortType(), help='Serial port device')
-def cmd(port): ...
+@click.option('--baud', type=BaudRateType(), default=115200)
+@click.option('--offset', type=AnyIntType())
+@click.option('--size', type=AutoSizeType())
+def cmd(port, baud, offset, size): ...
 ```
 
 `SerialPortType` is intentionally lenient: `convert()` returns the value unchanged (no parse-time existence check — validation belongs in the open-port path). `shell_complete()` provides device-path completion backed by `get_port_list()`; the import is lazy, so tools with `[cli]` but not `[serial]` still get a functional type (completion returns empty).
 
-Reusable option decorators (`add_output_options`, chip/int helpers, etc.) remain **Planned** in `esp_pylib.cli_options` — keep tool-specific options local until that module ships.
+`AutoSizeType(allow_all=False)` rejects the literal `all` when the tool never supported whole-device sizing. For per-parameter semantics and edge cases, read the class docstrings in `esp_pylib/cli_types.py`.
+
+#### C) Adopt shared Click option classes (`esp_pylib.cli_options`)
+
+Requires `esp-pylib[cli]`. Replace tool-local copies of these classes; wire each option with `cls=…`.
+
+**Mutually exclusive flags** — mirrors `argparse.add_mutually_exclusive_group()`. List peers by Click option `name` (underscore form: `no_compress` for `--no-compress`). Declare the constraint on **both** sides of each pair:
+
+```python
+import rich_click as click
+from esp_pylib.cli_options import MutuallyExclusiveOption
+
+@click.command()
+@click.option(
+    '--compress',
+    is_flag=True,
+    cls=MutuallyExclusiveOption,
+    exclusive_with=['no_compress'],
+)
+@click.option(
+    '--no-compress',
+    '-u',
+    is_flag=True,
+    cls=MutuallyExclusiveOption,
+    exclusive_with=['compress'],
+)
+def cmd(compress, no_compress): ...
+```
+
+**Option `nargs='*'`** — use `OptionEatAll` so the option consumes tokens until the next flag (or, on a group with subcommands, until a known command name). Combine with `multiple=True` when the tool allowed repeating the option (`--key a.pem --key b.pem`):
+
+```python
+from esp_pylib.cli_options import OptionEatAll
+
+@click.option('--port-filter', multiple=True, type=str, cls=OptionEatAll)
+@click.option('--verbose', is_flag=True)
+def cmd(port_filter, verbose): ...
+# mytool --port-filter vid=0x303A name=USB --verbose
+# → port_filter == ('vid=0x303A', 'name=USB')  # with multiple=True
+```
+
+Without `multiple=True`, `OptionEatAll` passes the full eaten token list to `type.convert()` once. Use that only with a custom `ParamType` that accepts `list[str]` (esptool `AddrFilenamePairType` on `--encrypt-files`). Do not pair it with `str`, `click.File`, or other built-in types.
+
+**Groups with subcommands:** use `EspRichGroup` from `esp_pylib.cli_options` — it sets `ctx._commands_list` before parsing so eat-all options stop at subcommand names (`mytool --port-filter a=b flash` does not treat `flash` as a filter value):
+
+```python
+import rich_click as click
+from esp_pylib.cli_options import EspRichGroup, OptionEatAll
+
+@click.group(cls=EspRichGroup)
+@click.option('--port-filter', multiple=True, type=str, cls=OptionEatAll)
+def cli(port_filter): ...
+
+@cli.command()
+def flash(): ...
+```
+
+If the tool already subclasses `click.RichGroup` for other `parse_args` work (deprecated-flag rewriting, shared `ctx` state, …), subclass `EspRichGroup` instead and call `super().parse_args(ctx, args)` so `_commands_list` is still set — see `esptool`'s `Group` in `cli_util.py`. A plain `@click.command()` with no subcommands does **not** need `EspRichGroup`.
 
 ### Step 13: Migrate sys.exit calls
 
@@ -411,7 +488,8 @@ Inside library code prefer `raise FatalError(...)` (or a tool-specific subclass)
 | Local serial port enumeration / sorting                          | Step 9 (keep tool-specific selection heuristics)                        |
 | Local DTR/RTS primitives + named reset sequences + custom parser | Step 10 (keep strategy-selection, retry orchestration, config plumbing) |
 | `argparse` CLI modules (`argument_parser.py`, `cli_ext.py`, …)   | Step 12 A (after tests pass on rich-click CLI)                          |
-| Local Click `SerialPortType` (or equivalent)                     | Step 12 B                                                               |
+| Local Click `ParamType`s (`SerialPortType`, `AnyIntType`, …)     | Step 12 B                                                               |
+| Local `MutuallyExclusiveOption` / `OptionEatAll`                 | Step 12 C                                                               |
 | Local ROM ELF getter                                             | Step 8 — only after row flips to Available                              |
 
 ### Step 15: Run tests and verify
@@ -429,8 +507,8 @@ Inside library code prefer `raise FatalError(...)` (or a tool-specific subclass)
 Produce a short report (PR description, or a sibling note linked from it) that classifies every change made in Steps 3–14 by review risk, so the reviewer knows where to focus. Use these three buckets:
 
 - **Easy / mechanical** — 1:1 substitutions with no behaviour change: constant imports (Step 3), `FatalError` swap (Step 4), straight `red_print` / `logging.*` → `log.*` rewrites (Step 5 A–D), dependency edits (Step 2), file deletions (Step 14). Listing these as a single line per file is fine.
-- **Medium / needed a wrapper or small refactor** — anywhere a public-API shape was preserved by adapting the new return type, or a subclass was introduced: `ToolConfig` behind the old loader function (Step 7), `get_port_list` returning `ListPortInfo` vs. the old device-string list (Step 9), `parse_port_filters` tuple-vs-dict reshaping (Step 9), `progress_bar` overrides or `EspLog` subclasses (Step 5 E–F), WebSocket wire-format / field-shape adjustments (Step 11), `PortVidPidNotFoundError` local catch sites (Steps 4, 9, 10), argparse→rich-click conversions where only mechanical mapping was needed (Step 12 A).
-- **High / needs human verification on real hardware or in-context review** — anything touching reset orchestration, runtime behaviour, or error/exit semantics: per-chip timing tables wired into shared reset sequences (Step 10), `flow_control` derivation from live VID/PID (Step 10), Windows fallback when `unix_tight_bootloader_reset` raises (Step 10), `install_exception_reporting()` placement relative to pre-existing `sys.excepthook` / `threading.excepthook` hooks (Step 6), `sys.exit` → `log.die` / `raise FatalError` conversions that change who decides to terminate (Step 13), any custom-reset-string handling that previously raised tool-specific errors (Step 10), argparse→rich-click changes that alter subcommand defaults, positional arity, or `nargs`/`multiple` behaviour (Step 12 A — exercise every documented CLI combination).
+- **Medium / needed a wrapper or small refactor** — anywhere a public-API shape was preserved by adapting the new return type, or a subclass was introduced: `ToolConfig` behind the old loader function (Step 7), `get_port_list` returning `ListPortInfo` vs. the old device-string list (Step 9), `parse_port_filters` tuple-vs-dict reshaping (Step 9), `progress_bar` overrides or `EspLog` subclasses (Step 5 E–F), WebSocket wire-format / field-shape adjustments (Step 11), `PortVidPidNotFoundError` local catch sites (Steps 4, 9, 10), argparse→rich-click conversions where only mechanical mapping was needed (Step 12 A), drop-in `cli_types` / `cli_options` imports when behaviour already matched the shared implementation (Steps 12 B–C).
+- **High / needs human verification on real hardware or in-context review** — anything touching reset orchestration, runtime behaviour, or error/exit semantics: per-chip timing tables wired into shared reset sequences (Step 10), `flow_control` derivation from live VID/PID (Step 10), Windows fallback when `unix_tight_bootloader_reset` raises (Step 10), `install_exception_reporting()` placement relative to pre-existing `sys.excepthook` / `threading.excepthook` hooks (Step 6), `sys.exit` → `log.die` / `raise FatalError` conversions that change who decides to terminate (Step 13), any custom-reset-string handling that previously raised tool-specific errors (Step 10), argparse→rich-click changes that alter subcommand defaults, positional arity, or `nargs`/`multiple` behaviour (Step 12 A — exercise every documented CLI combination), first adoption of `OptionEatAll` on a group with subcommands (confirm `EspRichGroup` / `super().parse_args` and that documented flag combinations still parse).
 
 For each Medium / High entry, name the file(s) touched and call out what the reviewer should verify by hand — e.g. "test reset on an ESP32-S3 behind a CP210x adapter (flow_control path)" or "confirm `sentry_excepthook` still runs after `install_exception_reporting()`". Skipped `[Planned]` steps and intentionally-kept-local code (see [§ What stays local](#what-stays-local)) should also be noted so the reviewer doesn't flag them as misses.
 
