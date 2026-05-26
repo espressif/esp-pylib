@@ -28,7 +28,7 @@ Inventory candidates for migration. Look for:
 
 ### Step 2: Add dependency
 
-In `pyproject.toml` add `esp-pylib` with the smallest extras set matching the steps performed. Before committing, look up the current version on PyPI (`pip index versions esp-pylib`, or `https://pypi.org/project/esp-pylib/`) and substitute it for the `X.Y.Z` shown below — do **not** leave `X.Y.Z` literally in `pyproject.toml`.
+In `pyproject.toml` (or `setup.py`) add `esp-pylib` with the smallest extras set matching the steps performed. Before committing, look up the current version on PyPI (`pip index versions esp-pylib`, or `https://pypi.org/project/esp-pylib/`) and substitute it for the `X.Y.Z` shown below — do **not** leave `X.Y.Z` literally in `pyproject.toml` or `setup.py`.
 
 ```toml
 "esp-pylib>=X.Y.Z"            # logger / errors / constants / config (pure stdlib)
