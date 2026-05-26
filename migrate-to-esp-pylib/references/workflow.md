@@ -20,6 +20,7 @@ Inventory candidates for migration. Look for:
 - Raw ANSI escape codes (`\033[…m`), `red_print` / `yellow_print` / `note_print` helpers, direct `rich.console.Console()` use, `import logging`, hand-rolled `print(..., file=sys.stderr)`, ad-hoc progress printers → Step 5.
 - Local WebSocket clients → Step 11.
 - Local INI config loader → Step 7.
+- Module-level ``IDF_PATH`` / ``ESP_ROM_ELF_DIR`` / ``ROMS_JSON`` constants and a local ``get_rom_elf_path()`` → Step 8.
 - Local serial port enumeration → Step 9.
 - Inline `PIN_LOW` / `PIN_HIGH`, hard-coded reset delays, local `TIOCM*` fallbacks, local copies of `classic_bootloader_reset` / `unix_tight_bootloader_reset` / `usb_jtag_bootloader_reset` / `hard_reset`, per-adapter `flow_control` flags → Step 10.
 - `argparse` (`ArgumentParser`, `add_argument`, subparsers) or duplicated local Click helpers (`SerialPortType`, `AnyIntType`, `AutoSizeType`, `BaudRateType`, `arg_auto_int`, `MutuallyExclusiveOption`, `OptionEatAll`) → Step 12 (framework conversion + shared `cli_types` / `cli_options`).
@@ -209,9 +210,32 @@ Migration tips — match these to avoid silently downgrading the user-facing beh
 
 To preserve a tool's existing `(ConfigParser, Path)` public API, wrap `ToolConfig` rather than exposing it directly — see [§ Backward-compatibility patterns](#backward-compatibility-patterns).
 
-### Step 8: Replace ROM ELF resolution — [Planned]
+### Step 8: Replace ROM ELF resolution
 
-TBD
+Delete module-level ``IDF_PATH``, ``ESP_ROM_ELF_DIR``, and ``ROMS_JSON`` constants plus any local ``get_rom_elf_path()`` implementation. Replace with:
+
+```python
+from esp_pylib.rom import get_rom_elf_path
+
+elf = get_rom_elf_path(target, chip_rev)  # str | None
+```
+
+``get_rom_elf_path`` returns ``None`` when ``IDF_PATH`` or ``ESP_ROM_ELF_DIR`` are unset, when no ``roms.json`` is found under ``IDF_PATH``, or when *chip_rev* has no matching entry. The ELF filename pattern is ``{target}_rev{chip_rev}_rom.elf`` under ``ESP_ROM_ELF_DIR``.
+
+``roms.json`` candidates are tried in order (unreadable files, invalid JSON, JSON
+that omits *target*, or lists *target* with an empty revision array are skipped):
+
+1. ``$IDF_PATH/components/esp_rom/roms.json`` (ESP-IDF ≥ 5.5)
+2. ``$IDF_PATH/tools/idf_py_actions/roms.json`` (legacy location)
+
+Once a file lists *target* with a non-empty revision list, that file is
+authoritative — a missing *chip_rev* there does not fall back to the other path.
+
+For tests or tooling that need the raw paths without resolving an ELF:
+
+```python
+from esp_pylib.rom import get_idf_path, get_rom_elf_dir, get_roms_json_paths
+```
 
 ### Step 9: Replace serial port logic
 
@@ -483,14 +507,14 @@ Inside library code prefer `raise FatalError(...)` (or a tool-specific subclass)
 | Local Rich-based `log.py`                                        | Step 5                                                                  |
 | Local hand-rolled progress-bar printers                          | Step 5 (override `progress_bar` if rendering doesn't match)             |
 | Local `class FatalError(...)`                                    | Step 4                                                                  |
-| Local WebSocket client module                                    | Step 11                                                                 |
 | Local INI config loader                                          | Step 7                                                                  |
+| Local ROM ELF getter                                             | Step 8                                                                  |
 | Local serial port enumeration / sorting                          | Step 9 (keep tool-specific selection heuristics)                        |
 | Local DTR/RTS primitives + named reset sequences + custom parser | Step 10 (keep strategy-selection, retry orchestration, config plumbing) |
+| Local WebSocket client module                                    | Step 11                                                                 |
 | `argparse` CLI modules (`argument_parser.py`, `cli_ext.py`, …)   | Step 12 A (after tests pass on rich-click CLI)                          |
 | Local Click `ParamType`s (`SerialPortType`, `AnyIntType`, …)     | Step 12 B                                                               |
 | Local `MutuallyExclusiveOption` / `OptionEatAll`                 | Step 12 C                                                               |
-| Local ROM ELF getter                                             | Step 8 — only after row flips to Available                              |
 
 ### Step 15: Run tests and verify
 
