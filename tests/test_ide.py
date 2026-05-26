@@ -54,11 +54,11 @@ def restore_hooks():
 
 class TestWsUrl:
     def test_no_env_returns_none(self, monkeypatch):
-        monkeypatch.delenv('ESPRESSIF_IDE_WS', raising=False)
+        monkeypatch.delenv('ESP_IDE_WS', raising=False)
         assert ws._get_ws_url() is None
 
     def test_env_returns_url(self, monkeypatch):
-        monkeypatch.setenv('ESPRESSIF_IDE_WS', 'ws://a')
+        monkeypatch.setenv('ESP_IDE_WS', 'ws://a')
         assert ws._get_ws_url() == 'ws://a'
 
     def test_negative_result_is_cached(self, monkeypatch):
@@ -67,21 +67,21 @@ class TestWsUrl:
         Pins the perf claim that ``is_enabled()`` is one-shot — without negative caching,
         every CLI warn/err with no IDE configured would re-enter os.environ.get.
         """
-        monkeypatch.delenv('ESPRESSIF_IDE_WS', raising=False)
+        monkeypatch.delenv('ESP_IDE_WS', raising=False)
         assert ws._get_ws_url() is None
         # Setting the env var afterwards must NOT change the cached negative result.
-        monkeypatch.setenv('ESPRESSIF_IDE_WS', 'ws://late')
+        monkeypatch.setenv('ESP_IDE_WS', 'ws://late')
         assert ws._get_ws_url() is None
 
 
 class TestSetWsUrl:
     def test_explicit_url_overrides_env(self, monkeypatch):
-        monkeypatch.setenv('ESPRESSIF_IDE_WS', 'ws://from-env')
+        monkeypatch.setenv('ESP_IDE_WS', 'ws://from-env')
         ws.set_ws_url('ws://explicit')
         assert ws._get_ws_url() == 'ws://explicit'
 
     def test_clear_falls_back_to_env(self, monkeypatch):
-        monkeypatch.setenv('ESPRESSIF_IDE_WS', 'ws://from-env')
+        monkeypatch.setenv('ESP_IDE_WS', 'ws://from-env')
         ws.set_ws_url('ws://explicit')
         ws.set_ws_url(None)
         assert ws._get_ws_url() == 'ws://from-env'
@@ -96,12 +96,12 @@ class TestSetWsUrl:
 
 class TestEnsureConnected:
     def test_raises_fatal_when_url_not_configured(self, monkeypatch):
-        monkeypatch.delenv('ESPRESSIF_IDE_WS', raising=False)
+        monkeypatch.delenv('ESP_IDE_WS', raising=False)
         with pytest.raises(FatalError, match='WebSocket not configured'):
             ws.ensure_connected()
 
     def test_succeeds_when_connect_works(self, monkeypatch):
-        monkeypatch.setenv('ESPRESSIF_IDE_WS', 'ws://localhost:12')
+        monkeypatch.setenv('ESP_IDE_WS', 'ws://localhost:12')
         fake_conn = MagicMock()
         fake_module = MagicMock()
         fake_module.connect.return_value = fake_conn
@@ -113,7 +113,7 @@ class TestEnsureConnected:
         assert ws._connection is fake_conn
 
     def test_raises_after_exhausting_retries(self, monkeypatch):
-        monkeypatch.setenv('ESPRESSIF_IDE_WS', 'ws://localhost:13')
+        monkeypatch.setenv('ESP_IDE_WS', 'ws://localhost:13')
         fake_module = MagicMock()
         fake_module.connect.side_effect = OSError('refused')
         with patch.dict(
@@ -132,7 +132,7 @@ class TestEnsureConnected:
         """Two threads calling ``_ensure_connection`` simultaneously may both reach ``connect()``
         (since the lock is released for I/O). The loser must close its own socket instead of
         leaking it, and both callers must end up with the same shared connection."""
-        monkeypatch.setenv('ESPRESSIF_IDE_WS', 'ws://localhost:99')
+        monkeypatch.setenv('ESP_IDE_WS', 'ws://localhost:99')
 
         barrier = threading.Barrier(2)
         created: list = []
@@ -186,7 +186,7 @@ class TestEnsureConnected:
 class TestSendLogMessage:
     @patch('esp_pylib.ws._ensure_connection')
     def test_sends_json_payload(self, mock_ensure, monkeypatch):
-        monkeypatch.setenv('ESPRESSIF_IDE_WS', 'ws://localhost:9')
+        monkeypatch.setenv('ESP_IDE_WS', 'ws://localhost:9')
         mock_conn = MagicMock()
         mock_ensure.return_value = mock_conn
 
@@ -204,19 +204,19 @@ class TestSendLogMessage:
         }
 
     def test_no_env_no_connect(self, monkeypatch):
-        monkeypatch.delenv('ESPRESSIF_IDE_WS', raising=False)
+        monkeypatch.delenv('ESP_IDE_WS', raising=False)
         with patch('esp_pylib.ws._ensure_connection') as mock_ensure:
             ws.send_log_message('warning', 'w', None, 'f.py', 1)
             mock_ensure.assert_not_called()
 
     @patch('esp_pylib.ws._ensure_connection', return_value=None)
     def test_connect_failure_swallowed(self, _mock_ensure, monkeypatch):
-        monkeypatch.setenv('ESPRESSIF_IDE_WS', 'ws://localhost:1')
+        monkeypatch.setenv('ESP_IDE_WS', 'ws://localhost:1')
         ws.send_log_message('error', 'e', None, 'f.py', 1)
 
     @patch('esp_pylib.ws._ensure_connection')
     def test_send_retries_once_after_failure(self, mock_ensure, monkeypatch):
-        monkeypatch.setenv('ESPRESSIF_IDE_WS', 'ws://localhost:2')
+        monkeypatch.setenv('ESP_IDE_WS', 'ws://localhost:2')
         first = MagicMock()
         first.send.side_effect = OSError('broken pipe')
         second = MagicMock()
@@ -232,13 +232,13 @@ class TestSendLogMessage:
 
 class TestSendEvent:
     def test_raises_when_not_configured(self, monkeypatch):
-        monkeypatch.delenv('ESPRESSIF_IDE_WS', raising=False)
+        monkeypatch.delenv('ESP_IDE_WS', raising=False)
         with pytest.raises(FatalError, match='WebSocket not configured'):
             ws.send_event('gdb_stub', port='/dev/ttyUSB0', prog='/a.elf')
 
     @patch('esp_pylib.ws._ensure_connection')
     def test_sends_event_payload(self, mock_ensure, monkeypatch):
-        monkeypatch.setenv('ESPRESSIF_IDE_WS', 'ws://localhost:3')
+        monkeypatch.setenv('ESP_IDE_WS', 'ws://localhost:3')
         mock_conn = MagicMock()
         mock_ensure.return_value = mock_conn
 
@@ -258,7 +258,7 @@ class TestSendEvent:
         ``event`` is protected by Python's call semantics (it is a positional parameter),
         so only ``type`` can realistically collide via ``**kwargs``.
         """
-        monkeypatch.setenv('ESPRESSIF_IDE_WS', 'ws://localhost:3')
+        monkeypatch.setenv('ESP_IDE_WS', 'ws://localhost:3')
         mock_conn = MagicMock()
         mock_ensure.return_value = mock_conn
 
@@ -273,7 +273,7 @@ class TestSendEvent:
     def test_send_failure_raises_fatal_and_drops_connection(self, mock_ensure, monkeypatch):
         """A transport failure on send must surface as FatalError (not the underlying OSError)
         and clear the cached connection so subsequent calls reconnect."""
-        monkeypatch.setenv('ESPRESSIF_IDE_WS', 'ws://localhost:3')
+        monkeypatch.setenv('ESP_IDE_WS', 'ws://localhost:3')
         mock_conn = MagicMock()
         mock_conn.send.side_effect = OSError('broken pipe')
         mock_ensure.return_value = mock_conn
@@ -286,7 +286,7 @@ class TestSendEvent:
     def test_raises_distinct_message_when_websockets_missing(self, monkeypatch):
         """URL is set but ``websockets`` import fails: error must point at the missing extra,
         not claim the env var is unset."""
-        monkeypatch.setenv('ESPRESSIF_IDE_WS', 'ws://localhost:3')
+        monkeypatch.setenv('ESP_IDE_WS', 'ws://localhost:3')
         with patch.dict(sys.modules, {'websockets': None, 'websockets.sync': None, 'websockets.sync.client': None}):
             with pytest.raises(FatalError, match=r'websockets.*esp-pylib\[ide\]'):
                 ws.send_event('gdb_stub')
@@ -294,7 +294,7 @@ class TestSendEvent:
     def test_raises_distinct_message_when_connect_fails(self, monkeypatch):
         """URL is set, ``websockets`` is importable, but connect() fails: error must say
         'Cannot connect', not 'WebSocket not configured'."""
-        monkeypatch.setenv('ESPRESSIF_IDE_WS', 'ws://localhost:3')
+        monkeypatch.setenv('ESP_IDE_WS', 'ws://localhost:3')
         fake_module = MagicMock()
         fake_module.connect.side_effect = OSError('refused')
         with patch.dict(
@@ -307,13 +307,13 @@ class TestSendEvent:
 
 class TestWaitForEvent:
     def test_raises_when_not_configured(self, monkeypatch):
-        monkeypatch.delenv('ESPRESSIF_IDE_WS', raising=False)
+        monkeypatch.delenv('ESP_IDE_WS', raising=False)
         with pytest.raises(FatalError, match='WebSocket not configured'):
             ws.wait_for_event('debug_finished')
 
     @patch('esp_pylib.ws._ensure_connection')
     def test_returns_matching_message(self, mock_ensure, monkeypatch):
-        monkeypatch.setenv('ESPRESSIF_IDE_WS', 'ws://localhost:4')
+        monkeypatch.setenv('ESP_IDE_WS', 'ws://localhost:4')
         mock_conn = MagicMock()
         mock_conn.recv.return_value = json.dumps({'type': 'event', 'event': 'debug_finished'})
         mock_ensure.return_value = mock_conn
@@ -324,7 +324,7 @@ class TestWaitForEvent:
 
     @patch('esp_pylib.ws._ensure_connection')
     def test_skips_non_matching_until_match(self, mock_ensure, monkeypatch):
-        monkeypatch.setenv('ESPRESSIF_IDE_WS', 'ws://localhost:5')
+        monkeypatch.setenv('ESP_IDE_WS', 'ws://localhost:5')
         mock_conn = MagicMock()
         mock_conn.recv.side_effect = [
             json.dumps({'type': 'event', 'event': 'noise'}),
@@ -340,7 +340,7 @@ class TestWaitForEvent:
     @patch('esp_pylib.ws._ensure_connection')
     def test_malformed_json_skipped_without_reconnect(self, mock_ensure, monkeypatch):
         """Bad JSON is a content error, not a transport error: keep waiting on the same connection."""
-        monkeypatch.setenv('ESPRESSIF_IDE_WS', 'ws://localhost:14')
+        monkeypatch.setenv('ESP_IDE_WS', 'ws://localhost:14')
         mock_conn = MagicMock()
         mock_conn.recv.side_effect = [
             'not-json',
@@ -355,13 +355,13 @@ class TestWaitForEvent:
         assert mock_ensure.call_count == 1
 
     def test_raises_distinct_message_when_websockets_missing(self, monkeypatch):
-        monkeypatch.setenv('ESPRESSIF_IDE_WS', 'ws://localhost:6')
+        monkeypatch.setenv('ESP_IDE_WS', 'ws://localhost:6')
         with patch.dict(sys.modules, {'websockets': None, 'websockets.sync': None, 'websockets.sync.client': None}):
             with pytest.raises(FatalError, match=r'websockets.*esp-pylib\[ide\]'):
                 ws.wait_for_event('debug_finished')
 
     def test_raises_distinct_message_when_connect_fails(self, monkeypatch):
-        monkeypatch.setenv('ESPRESSIF_IDE_WS', 'ws://localhost:6')
+        monkeypatch.setenv('ESP_IDE_WS', 'ws://localhost:6')
         fake_module = MagicMock()
         fake_module.connect.side_effect = OSError('refused')
         with patch.dict(
@@ -373,7 +373,7 @@ class TestWaitForEvent:
 
     @patch('esp_pylib.ws._ensure_connection')
     def test_raises_after_retries_on_persistent_failure(self, mock_ensure, monkeypatch):
-        monkeypatch.setenv('ESPRESSIF_IDE_WS', 'ws://localhost:6')
+        monkeypatch.setenv('ESP_IDE_WS', 'ws://localhost:6')
         mock_conn = MagicMock()
         mock_conn.recv.side_effect = OSError('eof')
         mock_ensure.return_value = mock_conn
@@ -389,7 +389,7 @@ class TestWaitForEvent:
         Strict mode is used for the first call (succeeds, returns mock_conn); the retry path
         uses non-strict mode (returns None on connect failure).
         """
-        monkeypatch.setenv('ESPRESSIF_IDE_WS', 'ws://localhost:15')
+        monkeypatch.setenv('ESP_IDE_WS', 'ws://localhost:15')
         mock_conn = MagicMock()
         mock_conn.recv.side_effect = OSError('eof')
         # First call (strict=True) succeeds; subsequent reconnects (non-strict) return None.
@@ -401,7 +401,7 @@ class TestWaitForEvent:
 
 class TestClose:
     def test_close_clears_connection(self, monkeypatch):
-        monkeypatch.setenv('ESPRESSIF_IDE_WS', 'ws://localhost:7')
+        monkeypatch.setenv('ESP_IDE_WS', 'ws://localhost:7')
         mock_conn = MagicMock()
         ws._connection = mock_conn
 
@@ -414,7 +414,7 @@ class TestClose:
 class TestExcepthook:
     @pytest.mark.usefixtures('restore_hooks')
     def test_sys_excepthook_reports_innermost_location(self, monkeypatch):
-        monkeypatch.setenv('ESPRESSIF_IDE_WS', 'ws://localhost:8')
+        monkeypatch.setenv('ESP_IDE_WS', 'ws://localhost:8')
         sent = []
 
         def capture(typ, message, suggestion, file, line):
@@ -452,7 +452,7 @@ class TestExcepthook:
 
     @pytest.mark.usefixtures('restore_hooks')
     def test_skips_system_exit_and_keyboard_interrupt(self, monkeypatch):
-        monkeypatch.setenv('ESPRESSIF_IDE_WS', 'ws://localhost:8')
+        monkeypatch.setenv('ESP_IDE_WS', 'ws://localhost:8')
         mock_send = MagicMock()
         with patch('esp_pylib.excepthook.send_log_message', mock_send):
             from esp_pylib.excepthook import install_exception_reporting
@@ -465,7 +465,7 @@ class TestExcepthook:
 
     @pytest.mark.usefixtures('restore_hooks')
     def test_install_is_idempotent(self, monkeypatch):
-        monkeypatch.setenv('ESPRESSIF_IDE_WS', 'ws://localhost:8')
+        monkeypatch.setenv('ESP_IDE_WS', 'ws://localhost:8')
         with patch('esp_pylib.excepthook.send_log_message'):
             from esp_pylib import excepthook as eh
 
@@ -481,7 +481,7 @@ class TestExcepthook:
     @pytest.mark.filterwarnings('ignore::pytest.PytestUnhandledThreadExceptionWarning')
     @pytest.mark.usefixtures('restore_hooks')
     def test_thread_excepthook_sends_exception(self, monkeypatch):
-        monkeypatch.setenv('ESPRESSIF_IDE_WS', 'ws://localhost:8')
+        monkeypatch.setenv('ESP_IDE_WS', 'ws://localhost:8')
         sent = []
 
         def capture(typ, message, suggestion, file, line):

@@ -168,7 +168,7 @@ The `suggestion=` kwarg on `warn` / `err` / `die` is forwarded only to the IDE W
 
 ### Step 6: Wire up IDE WebSocket + exception hooks
 
-After Step 5, IDE diagnostics work automatically (`log.warn` / `err` / `die` forward via WebSocket when `ESPRESSIF_IDE_WS` is set). To also forward uncaught exceptions, add one call near the entry point:
+After Step 5, IDE diagnostics work automatically (`log.warn` / `err` / `die` forward via WebSocket when `ESP_IDE_WS` is set). To also forward uncaught exceptions, add one call near the entry point:
 
 ```python
 from esp_pylib.excepthook import install_exception_reporting
@@ -176,7 +176,7 @@ from esp_pylib.excepthook import install_exception_reporting
 install_exception_reporting()
 ```
 
-It chains to the previous `sys.excepthook` / `threading.excepthook`, filters `SystemExit` / `KeyboardInterrupt`, and is safe to call multiple times. The `sys.excepthook` is always installed (so chaining to a previously installed hook keeps working); the `threading.excepthook` integration is skipped on Python 3.7 because that hook only exists in 3.8+. IDE *delivery* additionally requires the `[ide]` extra (`websockets`) and `ESPRESSIF_IDE_WS` to be set — without them, `send_log_message` silently no-ops while the hooks still chain normally.
+It chains to the previous `sys.excepthook` / `threading.excepthook`, filters `SystemExit` / `KeyboardInterrupt`, and is safe to call multiple times. The `sys.excepthook` is always installed (so chaining to a previously installed hook keeps working); the `threading.excepthook` integration is skipped on Python 3.7 because that hook only exists in 3.8+. IDE *delivery* additionally requires the `[ide]` extra (`websockets`) and `ESP_IDE_WS` to be set — without them, `send_log_message` silently no-ops while the hooks still chain normally.
 
 ### Step 7: Replace config loader
 
@@ -311,7 +311,7 @@ steps = parse_custom_reset_sequence('D0|R1|U1,0|W0.1')  # list[dict] for custom 
 ```python
 from esp_pylib.ws import send_event, wait_for_event, set_ws_url, is_enabled, close, ensure_connected
 
-set_ws_url(args.ws)         # optional — pass None to fall back to ESPRESSIF_IDE_WS
+set_ws_url(args.ws)         # optional — pass None to fall back to ESP_IDE_WS
 send_event('gdb_stub', port=port, prog=prog)
 wait_for_event('debug_finished')
 close()                     # on clean shutdown
