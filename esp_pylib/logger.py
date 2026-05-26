@@ -55,6 +55,23 @@ _progress_output: 'contextvars.ContextVar[Optional[Any]]' = contextvars.ContextV
 
 UNICODE_PROGRESS_CHAR = '━'
 UNICODE_HALF_PROGRESS_CHAR = '╸'
+# ASCII fallback for consoles whose encoding cannot represent the Unicode bar
+# (e.g. Windows cp1252). Matches the pre-esp-pylib esptool progress bar style.
+ASCII_PROGRESS_CHAR = '='
+ASCII_HALF_PROGRESS_CHAR = '>'
+
+
+def _progress_bar_use_ascii(console: Console) -> bool:
+    """Whether to use ASCII bar glyphs — matches :class:`~rich.progress_bar.ProgressBar`."""
+    options = console.options
+    return bool(options.legacy_windows or options.ascii_only)
+
+
+def _progress_bar_chars(console: Console) -> Tuple[str, str]:
+    """Bar glyphs for the padded plain renderer on *console*."""
+    if _progress_bar_use_ascii(console):
+        return ASCII_PROGRESS_CHAR, ASCII_HALF_PROGRESS_CHAR
+    return UNICODE_PROGRESS_CHAR, UNICODE_HALF_PROGRESS_CHAR
 
 
 def _format_elapsed(seconds: float) -> str:
@@ -412,8 +429,15 @@ class EspLog(EspLogBase):
         return Console(file=file, no_color=self.no_color, highlight=False, emoji=False)
 
     @staticmethod
-    def _render_plain_bar(completed: int, total: int, width: int) -> str:
-        """Render a fixed-width progress bar using UNICODE_PROGRESS_CHAR and spaces.
+    def _render_plain_bar(
+        completed: int,
+        total: int,
+        width: int,
+        *,
+        filled_char: str = UNICODE_PROGRESS_CHAR,
+        half_char: str = UNICODE_HALF_PROGRESS_CHAR,
+    ) -> str:
+        """Render a fixed-width progress bar using *filled_char* / *half_char* and spaces.
 
         Used when the active console can't render a dim background bar
         (``no_color=True`` or no ``color_system``). Rich's
@@ -426,12 +450,12 @@ class EspLog(EspLogBase):
         if width <= 0:
             return ''
         if total <= 0 or completed >= total:
-            return UNICODE_PROGRESS_CHAR * width
+            return filled_char * width
         completed = max(0, completed)
-        # Match Rich's half-step behaviour (UNICODE_HALF_PROGRESS_CHAR) so the bar advances smoothly.
+        # Match Rich's half-step behaviour (*half_char*) so the bar advances smoothly.
         complete_halves = int(width * 2 * completed / total)
         bar_count, half_bar_count = divmod(complete_halves, 2)
-        bar_str = UNICODE_PROGRESS_CHAR * bar_count + (UNICODE_HALF_PROGRESS_CHAR if half_bar_count else '')
+        bar_str = filled_char * bar_count + (half_char if half_bar_count else '')
         return bar_str + ' ' * (width - bar_count - half_bar_count)
 
     def progress_bar(
@@ -445,9 +469,12 @@ class EspLog(EspLogBase):
         """Print progress using Rich :class:`~rich.progress_bar.ProgressBar`.
 
         When the active console can't render a dim background bar (``no_color``
-        or no ``color_system``) the bar is rendered as a fixed-width plain
-        string (UNICODE_PROGRESS_CHAR for completed, spaces for the rest) so the suffix stays
-        in the same column across redraws.
+        or no ``color_system``), the bar is rendered as a fixed-width plain
+        string so the suffix stays in the same column across redraws. Glyph
+        selection uses the same Rich ``ascii_only`` / ``legacy_windows`` rules
+        as :class:`~rich.progress_bar.ProgressBar` (``=``/``>`` vs ``━``/``╸``).
+        When color is available, Rich's :class:`~rich.progress_bar.ProgressBar`
+        handles encoding and legacy Windows rendering.
         """
         if self._verbosity == Verbosity.SILENT:
             return
@@ -479,9 +506,18 @@ class EspLog(EspLogBase):
         # Pick the bar renderable: Rich's ProgressBar when the console can
         # shade the trailing portion (so the bar stays at constant width via
         # the dim background style), otherwise our fixed-width plain renderer.
+        # Glyph choice for the plain path follows Rich's ``ascii_only`` /
+        # ``legacy_windows`` flags (same as :class:`~rich.progress_bar.ProgressBar`).
         bar_renderable: Any
         if c.no_color or c.color_system is None:
-            bar_renderable = self._render_plain_bar(cur_iter, total_iters, bar_length)
+            filled_char, half_char = _progress_bar_chars(c)
+            bar_renderable = self._render_plain_bar(
+                cur_iter,
+                total_iters,
+                bar_length,
+                filled_char=filled_char,
+                half_char=half_char,
+            )
         elif total_iters == 0:
             bar_renderable = ProgressBar(total=1.0, completed=1.0, width=bar_length)
         else:

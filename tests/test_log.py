@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for esp_pylib.logger (EspLog, EspLogBase, set_logger, output)."""
 
+import io
 import re
 import sys
 from io import StringIO
@@ -452,6 +453,49 @@ class TestProgressBar:
         assert '0/0' in text
         assert 'Z' in text
         assert text.endswith('\n')
+
+    def test_cp1252_stdout_uses_ascii_bar(self):
+        """Plain progress bar on cp1252 uses ASCII glyphs (``=``/``>``), not Unicode.
+
+        Rich may auto-detect color on a TTY; pin ``no_color`` and ``color_system=None``
+        so the test always exercises the padded plain renderer and ASCII fallback.
+        """
+        EspLog._reset()
+        buffer = io.BytesIO()
+        cp1252_out = io.TextIOWrapper(buffer, encoding='cp1252', newline='', write_through=True)
+        cp1252_out.isatty = lambda: True  # type: ignore[method-assign]
+        fake_console = Console(
+            file=cp1252_out,
+            force_terminal=True,
+            no_color=True,
+            color_system=None,
+            highlight=False,
+            emoji=False,
+        )
+        with patch('sys.stdout', cp1252_out):
+            logger = EspLog()
+            with patch.object(logger, '_get_interactive_console', return_value=fake_console):
+                logger.progress_bar(
+                    cur_iter=1,
+                    total_iters=4,
+                    prefix='Progress: ',
+                    suffix=' (1/4)',
+                    bar_length=10,
+                )
+                partial = buffer.getvalue().decode('cp1252')
+                logger.progress_bar(
+                    cur_iter=4,
+                    total_iters=4,
+                    prefix='Reading: ',
+                    bar_length=10,
+                )
+                complete = buffer.getvalue().decode('cp1252')
+        assert '\u2501' not in partial and '\u2501' not in complete
+        assert '25.0%' in partial
+        bar_segment = partial.split('Progress: ', 1)[1].split('  25.0%', 1)[0]
+        assert bar_segment == '==>       ', repr(bar_segment)
+        assert '==========' in complete
+        assert '100.0%' in complete
 
     def test_negative_total_is_noop(self):
         EspLog._reset()
