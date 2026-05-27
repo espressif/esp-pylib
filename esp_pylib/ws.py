@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Espressif Systems (Shanghai) CO LTD
 # SPDX-License-Identifier: Apache-2.0
 """
-WebSocket client: send structured log messages to an IDE when ESPRESSIF_IDE_WS is set.
+WebSocket client: send structured log messages to an IDE when ESP_IDE_WS is set.
 Silently does nothing when the env var is unset, websockets is not installed, or the connection fails.
 """
 
@@ -29,7 +29,7 @@ __all__ = [
     'wait_for_event',
 ]
 
-_ENV_VAR = 'ESPRESSIF_IDE_WS'
+_ENV_VAR = 'ESP_IDE_WS'
 
 # Sentinel distinguishing "env var has not been read yet" from "env var was read and is unset".
 # Caching the negative result keeps is_enabled() — called on every warn/err — truly one-shot:
@@ -114,7 +114,7 @@ def set_ws_url(url: str | None) -> None:
     """
     Set an explicit WebSocket URL (e.g. esp-idf-monitor ``--ws`` or its
     legacy ``ESP_IDF_MONITOR_WS`` env var).
-    Pass ``None`` to clear the override and read ``ESPRESSIF_IDE_WS`` on next use.
+    Pass ``None`` to clear the override and read ``ESP_IDE_WS`` on next use.
     """
     global _ws_url
     with _lock:
@@ -230,7 +230,7 @@ def send_log_message(
     file: str,
     line: int,
 ) -> None:
-    """Send a structured log message to the IDE. No-op if ESPRESSIF_IDE_WS is unset."""
+    """Send a structured log message to the IDE. No-op if ESP_IDE_WS is unset."""
     if not _get_ws_url():
         return
     conn = _ensure_connection()

@@ -1,11 +1,18 @@
 ---
 name: migrate-to-esp-pylib
+repository: https://github.com/espressif/esp-pylib
 description: Migrates Espressif Python tools to the shared esp-pylib library. Use when the user explicitly asks to migrate to esp-pylib, replace duplicated code (FatalError, logging, progress bars, IDE WebSocket, INI config, ROM ELF resolution, serial port discovery, DTR/RTS reset primitives, named reset sequences, Click ParamTypes and Click option classes), convert argparse CLIs to rich-click, or remove dependencies superseded by an esp_pylib.* module.
 ---
 
 # Migrate a Tool to esp-pylib
 
-`esp-pylib` ships incrementally. The module status table below shows what is implemented today; skip steps marked `[Planned]` until they flip to `[Available]`. For per-parameter semantics, platform quirks, and edge cases, **read the relevant module's docstrings during migration** rather than relying on this skill — it intentionally stays at the workflow level.
+## Using this skill
+
+- **Bundle:** use the whole [`migrate-to-esp-pylib/`](https://github.com/espressif/esp-pylib/tree/master/migrate-to-esp-pylib) directory (`SKILL.md` plus `references/workflow.md`), not `SKILL.md` alone — symlink, copy, submodule, or fetch that folder from GitHub.
+- **Target repo:** run the migration in the **consumer** Python tool you are updating, not in the esp-pylib repository.
+- **Dependency:** add [`esp-pylib` on PyPI](https://pypi.org/project/esp-pylib/) to the consumer's `pyproject.toml` or `setup.py` (see [Step 2](references/workflow.md#step-2-add-dependency)); look up the current release on PyPI and pin `>=` that version — do not leave the `X.Y.Z` placeholder from the workflow examples.
+
+`esp-pylib` ships incrementally. The module status table below shows what is implemented today; skip steps marked `[Planned]` until they flip to `[Available]`. For per-parameter semantics, platform quirks, and edge cases, **read the relevant module's docstrings** (installed package or **Source** links below) rather than relying on this skill — it intentionally stays at the workflow level.
 
 ## Module status
 
@@ -29,7 +36,7 @@ description: Migrates Espressif Python tools to the shared esp-pylib library. Us
 
 One PR per consumer repo. Skip `[Planned]` steps.
 
-Copy this checklist and track progress. After Step 1, open **[references/workflow.md](references/workflow.md)** and follow only the sections for steps marked `[Available]` above.
+Copy this checklist and track progress. After Step 1, open **[references/workflow.md](references/workflow.md)** (or the [GitHub copy](https://github.com/espressif/esp-pylib/blob/master/migrate-to-esp-pylib/references/workflow.md) if the skill folder is not on disk) and follow only the sections for steps marked `[Available]` above.
 
 ```text
 Task Progress:
@@ -75,12 +82,12 @@ Also in [workflow.md](references/workflow.md): [what stays local](references/wor
 ## Critical rules
 
 1. **No breaking changes** — preserve existing public APIs; wrap return shapes where types differ.
-2. **Tool-specific code stays local** — see [what stays local](references/workflow.md#what-stays-local).
+2. **Tool-specific code stays local** — chip/protocol definitions, reset *strategy* selection and `--before`/`--after` plumbing, byte-level serial ANSI coloring, and tool-specific env vars/timings stay in the consumer; see [what stays local](references/workflow.md#what-stays-local).
 3. **`esp-pylib` never imports consumer tools** — the dependency graph flows one way.
 4. **Skip [Planned] steps** — never invent imports for unshipped modules.
-5. **Read module docstrings during migration** — this skill intentionally omits per-parameter semantics, platform quirks, and edge cases that live in the source.
+5. **Read module docstrings during migration** — use installed-package docstrings or the **Source** column above; this skill intentionally omits per-parameter semantics, platform quirks, and edge cases that live in the source.
 
 ## See also
 
-- [`README.md`](../README.md) (repo root) — public-facing usage doc; keep aligned with this skill.
-- [`references/workflow.md`](references/workflow.md) — detailed step instructions, code examples, and compatibility wrappers.
+- [`README.md`](https://github.com/espressif/esp-pylib/blob/master/README.md) (repo root) — public-facing usage doc; keep aligned with this skill.
+- [`references/workflow.md`](references/workflow.md) — detailed step instructions, code examples, and compatibility wrappers ([GitHub](https://github.com/espressif/esp-pylib/blob/master/migrate-to-esp-pylib/references/workflow.md) when the skill folder is not on disk).

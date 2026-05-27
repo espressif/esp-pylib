@@ -51,14 +51,14 @@ Espressif IDEs can launch tools with a WebSocket URL so errors, warnings, and ex
 
 | Variable | Purpose |
 | -------- | ------- |
-| `ESPRESSIF_IDE_WS` | WebSocket URL (e.g. `ws://127.0.0.1:12345`). Set by the IDE, not by end users. |
+| `ESP_IDE_WS` | WebSocket URL (e.g. `ws://127.0.0.1:12345`). Set by the IDE, not by end users. |
 
 **`esp_pylib.ws` API**
 
 - `send_log_message(typ, message, suggestion, file, line)` — Fire-and-forget. `typ` is one of `warning`, `error`, or `exception`. Failures are ignored so a broken IDE connection cannot crash the tool.
 - `send_event(event, **kwargs)` — Debug coordination (e.g. GDB stub / coredump). Sends `{"type": "event", "event": "<name>", ...}`. Raises `FatalError` if the URL is unset, `websockets` is missing, the connection cannot be established, or the send fails (each case carries a distinct message). The reserved `type` envelope key always wins over an identically-named `**kwargs` entry.
 - `wait_for_event(event, retries=3)` — Blocks until a JSON message with matching `event` is received (e.g. `debug_finished` from the IDE). Raises `FatalError` if the URL is unset, `websockets` is missing, the connection cannot be established, or no matching message arrives within `retries` reconnects.
-- `set_ws_url(url)` — Programmatic override for tools that expose their own flag (e.g. esp-idf-monitor's `--ws`). Pass `None` to clear the override and fall back to `ESPRESSIF_IDE_WS` on next use. Closes any existing connection.
+- `set_ws_url(url)` — Programmatic override for tools that expose their own flag (e.g. esp-idf-monitor's `--ws`). Pass `None` to clear the override and fall back to `ESP_IDE_WS` on next use. Closes any existing connection.
 - `close()` — Closes the shared connection (call on clean tool exit if you opened one).
 
 **Log message JSON shape** (tool → IDE):
@@ -83,7 +83,7 @@ from esp_pylib.excepthook import install_exception_reporting
 install_exception_reporting()
 ```
 
-This reports uncaught exceptions to the IDE when `ESPRESSIF_IDE_WS` is set (or `set_ws_url()` has been called). `SystemExit` and `KeyboardInterrupt` are not sent. The previous `sys.excepthook` / `threading.excepthook` handlers are always invoked afterward.
+This reports uncaught exceptions to the IDE when `ESP_IDE_WS` is set (or `set_ws_url()` has been called). `SystemExit` and `KeyboardInterrupt` are not sent. The previous `sys.excepthook` / `threading.excepthook` handlers are always invoked afterward.
 
 ### Progress bars
 
