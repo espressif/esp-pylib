@@ -377,9 +377,9 @@ class EspLog(EspLogBase):
             self.print(f'[dim]{escape(message)}[/dim]')
 
     def note(self, message: str) -> None:
-        """Informational note (blue) to STDOUT with 'Note: ' prefix."""
+        """Informational note (blue) to STDOUT with 'NOTE: ' prefix."""
         if self._verbosity != Verbosity.SILENT:
-            self.print(f'[#0077BB]Note:[/#0077BB] {message}')
+            self.print(f'[#0077BB]NOTE:[/#0077BB] {message}')
 
     def hint(self, message: str) -> None:
         """Actionable hint (cyan) to STDOUT with 'HINT: ' prefix."""

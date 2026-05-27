@@ -190,7 +190,7 @@ class TestErrorWarningNote:
             logger = EspLog()
             logger.note('info here')
         text = out.getvalue()
-        assert 'Note:' in text
+        assert 'NOTE:' in text
         assert 'info here' in text
 
     def test_hint_contains_message_on_stdout(self):

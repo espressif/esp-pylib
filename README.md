@@ -133,7 +133,7 @@ class MyLogger(EspLogBase):
         print(f"WARNING: {message}", file=sys.stderr)
 
     def note(self, message):
-        print(f"Note: {message}")
+        print(f"NOTE: {message}")
 
     def hint(self, message):
         print(f"HINT: {message}")
