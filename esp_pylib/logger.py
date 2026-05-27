@@ -23,6 +23,7 @@ from contextlib import contextmanager
 from typing import TYPE_CHECKING
 from typing import Any
 from typing import Iterator
+from typing import List
 from typing import Optional
 from typing import Tuple
 from typing import Union
@@ -219,6 +220,10 @@ class EspLogBase(ABC):
         self.err(message, suggestion)
         sys.exit(exit_code)
 
+    def stage(self, finish: bool = False) -> None:
+        """Start or finish a collapsible output stage (no-op on :class:`EspLogBase`)."""
+        pass
+
     @abstractmethod
     def set_verbosity(self, mode: Union[int, str]) -> None:
         """Set verbosity to Verbosity or convert string to Verbosity."""
@@ -302,6 +307,12 @@ class EspLog(EspLogBase):
     _initialized: bool = False
     _stdout: Console
     _stderr: Console
+    _stage_active: bool = False
+    _stage_newline_count: int = 0
+    _stage_kept_lines: List[Tuple[Optional[Any], str]]
+    # In-progress :meth:`progress_bar` redraws on stdout without a trailing
+    # newline; :meth:`_stage_erase_stdout` clears that line separately.
+    _stage_progress_visible: bool = False
 
     def __new__(cls, *args, **kwargs):
         if cls.__dict__.get('instance') is None:
@@ -315,11 +326,93 @@ class EspLog(EspLogBase):
             # Unicode characters can be used as emojis, e.g. ✅
             self._stderr = Console(file=sys.stderr, no_color=no_color, highlight=False, emoji=False)
             self._stdout = Console(file=sys.stdout, no_color=no_color, highlight=False, emoji=False)
+            self._stage_active = False
+            self._stage_newline_count = 0
+            self._stage_kept_lines = []
+            self._stage_progress_visible = False
             self._initialized = True
+
+    def _stage_reset(self) -> None:
+        self._stage_active = False
+        self._stage_newline_count = 0
+        self._stage_kept_lines.clear()
+        self._stage_progress_visible = False
+
+    def _stage_can_collapse(self) -> bool:
+        """Stages are collapsible only when verbosity is NORMAL and stdout is an interactive terminal."""
+        return self._verbosity == Verbosity.NORMAL and self._stdout.is_terminal
+
+    def _stage_track_newlines(self, *args: Any, **kwargs: Any) -> None:
+        # Counts only the newlines we emit ourselves. If the terminal soft-wraps
+        # a long line onto multiple rows, the wrapped rows are not counted;
+        # fixing it would require querying the live terminal width
+        # on every print, which is more complexity than the use case warrants.
+        if not self._stage_active:
+            return
+        message = ''.join(str(a) for a in args)
+        self._stage_newline_count += message.count('\n')
+        if kwargs.get('end', '\n') == '\n':
+            self._stage_newline_count += 1
+
+    def _stage_erase_stdout(self) -> None:
+        if self._stage_progress_visible:
+            # The cursor sits at the end of the bar text on the *current* row
+            # (the bar was redrawn with ``\r`` + erase and no trailing ``\n``).
+            # Rewind to column 0 and wipe the row in place; ``CURSOR_UP`` would
+            # walk one line above the stage and corrupt unrelated output.
+            self._stdout.print(
+                Control(ControlType.CARRIAGE_RETURN),
+                Control((ControlType.ERASE_IN_LINE, 2)),
+                end='',
+                markup=False,
+                highlight=False,
+            )
+            self._stage_progress_visible = False
+        if self._stage_newline_count <= 0:
+            return
+        controls: List[Control] = []
+        for _ in range(self._stage_newline_count):
+            controls.append(Control((ControlType.CURSOR_UP, 1)))
+            controls.append(Control((ControlType.ERASE_IN_LINE, 2)))
+        self._stdout.print(*controls, end='', markup=False, highlight=False)
+        self._stdout.file.flush()
+
+    def stage(self, finish: bool = False) -> None:
+        """Start or finish a collapsible output stage.
+
+        While a stage is active, ordinary :meth:`print` output on stdout is
+        discarded when the stage finishes successfully (TTY + normal verbosity).
+        :meth:`note` and :meth:`warn` are buffered and re-printed after collapse.
+        In verbose mode, or on non-interactive stdout, stages are inert markers
+        (output is never removed). Matches esptool's ``log.stage()`` behaviour.
+        """
+        if finish:
+            if not self._stage_active:
+                return
+            self._stage_active = False
+            if self._stage_can_collapse():
+                self._stage_erase_stdout()
+                for file, line in self._stage_kept_lines:
+                    self.print(line, file=file)
+            self._stage_newline_count = 0
+            self._stage_kept_lines.clear()
+            self._stage_progress_visible = False
+        else:
+            # Defensive reset: stage() should always start from a clean slate
+            # so a restart-without-finish (or stray state from before any
+            # stage existed) cannot bleed into this stage's erase count.
+            # Any notes/warns buffered by the previous (unfinished) stage are
+            # intentionally discarded
+            self._stage_newline_count = 0
+            self._stage_kept_lines.clear()
+            self._stage_progress_visible = False
+            self._stage_active = True
 
     @classmethod
     def _reset(cls) -> None:
         """Reset singleton to default EspLog (for testing)."""
+        if cls.instance is not None and isinstance(cls.instance, EspLog):
+            cls.instance._stage_reset()
         cls.instance = None
         cls._initialized = False
 
@@ -367,6 +460,8 @@ class EspLog(EspLogBase):
     def print(self, *args, **kwargs) -> None:
         """Plain output. Uses file= if provided (resolved at call time); else stdout. Suppressed when silent."""
         file = kwargs.pop('file', None)
+        if file is None or file == sys.stdout:
+            self._stage_track_newlines(*args, **kwargs)
         if self._verbosity == Verbosity.SILENT and file is None:
             return
         if file is None:
@@ -384,8 +479,13 @@ class EspLog(EspLogBase):
 
     def note(self, message: str) -> None:
         """Informational note (blue) to STDOUT with 'NOTE: ' prefix."""
-        if self._verbosity != Verbosity.SILENT:
-            self.print(f'[#0077BB]NOTE:[/#0077BB] {message}')
+        if self._verbosity == Verbosity.SILENT:
+            return
+        formatted = f'[#0077BB]NOTE:[/#0077BB] {message}'
+        if self._stage_active and self._stage_can_collapse():
+            self._stage_kept_lines.append((None, formatted))
+            return
+        self.print(formatted)
 
     def hint(self, message: str) -> None:
         """Actionable hint (cyan) to STDOUT with 'HINT: ' prefix."""
@@ -398,7 +498,11 @@ class EspLog(EspLogBase):
         Suggestions are only passed to websocket clients, not to the console.
         """
         if self._verbosity != Verbosity.SILENT:
-            self.print(f'[bold yellow]WARNING:[/bold yellow] {message}', file=sys.stderr)
+            formatted = f'[bold yellow]WARNING:[/bold yellow] {message}'
+            if self._stage_active and self._stage_can_collapse():
+                self._stage_kept_lines.append((sys.stderr, formatted))
+            else:
+                self.print(formatted, file=sys.stderr)
         # Skip stack walking in plain CLI usage where send_log_message would no-op anyway.
         if _ws_is_enabled():
             file, line = self._get_call_site()
@@ -559,6 +663,15 @@ class EspLog(EspLogBase):
         c.print(bar_renderable, suffix_part, sep='', end=end, markup=False, highlight=False)
         if not end:
             c.file.flush()
+            if self._stage_active and self._stage_can_collapse() and interactive is not None and c is self._stdout:
+                self._stage_progress_visible = True
+        elif end == '\n' and c is self._stdout and self._stage_active:
+            # Mirror :meth:`_stage_track_newlines`: only count rows while a
+            # stage is active, otherwise the counter leaks across stages and
+            # the next ``stage(finish=True)`` over-erases.
+            self._stage_newline_count += 1
+            if self._stage_can_collapse():
+                self._stage_progress_visible = False
 
 
 class _LogProxy:

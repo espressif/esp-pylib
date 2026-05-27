@@ -301,6 +301,19 @@ class TestCallSiteReporting:
         assert file == __file__, f'Expected test file, got {file} (likely points into logger.py)'
         assert line == expected_line
 
+    def test_warn_silent_still_forwards_to_ide(self):
+        """Silent mode suppresses stderr but must not drop IDE diagnostics."""
+        EspLog._reset()
+        with patch('sys.stderr', StringIO()) as err, patch('esp_pylib.logger._ws_is_enabled', return_value=True), patch(
+            'esp_pylib.logger.send_log_message'
+        ) as mock_send:
+            logger = EspLog()
+            logger.set_verbosity(Verbosity.SILENT)
+            logger.warn('quiet warning')
+        assert 'WARNING:' not in err.getvalue()
+        mock_send.assert_called_once()
+        assert mock_send.call_args[0][1] == 'quiet warning'
+
 
 class TestSkipCallSiteWhenIdeDisabled:
     """Plain CLI usage (no IDE WebSocket configured) must not pay the cost of stack walking
@@ -825,3 +838,217 @@ class TestProgressBarNoHighlight:
         # ``color_system`` — that's the whole point of using ``ProgressBar``
         # and is unrelated to this regression.
         assert ' 100.0% 0/0 [5s] ' in text
+
+
+class TestStage:
+    @staticmethod
+    def _erase_stdout_lines(logger: EspLog) -> None:
+        """StringIO does not interpret cursor controls — drop the last N stdout lines."""
+        count = logger._stage_newline_count
+        if logger._stage_progress_visible:
+            count += 1
+        if count <= 0:
+            return
+        f = logger._stdout.file
+        lines = f.getvalue().splitlines(keepends=True)
+        f.truncate(0)
+        f.seek(0)
+        if count < len(lines):
+            f.write(''.join(lines[:-count]))
+
+    def test_finish_without_start_is_noop(self):
+        logger = EspLog()
+        logger.stage(finish=True)
+
+    def test_stage_collapses_stdout_on_tty(self):
+        EspLog._reset()
+        out = StringIO()
+        err = StringIO()
+        with patch.object(Console, 'is_terminal', True):
+            logger = EspLog()
+            logger._stdout = Console(file=out, force_terminal=True, highlight=False, emoji=False)
+            logger._stderr = Console(file=err, force_terminal=True, highlight=False, emoji=False)
+            logger.set_verbosity(Verbosity.NORMAL)
+            with patch.object(logger, '_stage_erase_stdout', side_effect=lambda: self._erase_stdout_lines(logger)):
+                logger.stage()
+                logger.print('transient detail')
+                logger.note('saved note')
+                logger.warn('saved warning')
+                logger.stage(finish=True)
+        assert 'transient detail' not in out.getvalue()
+        assert 'NOTE:' in out.getvalue()
+        assert 'saved note' in out.getvalue()
+        assert 'WARNING:' in err.getvalue()
+        assert 'saved warning' in err.getvalue()
+
+    def test_stage_verbose_keeps_all_output(self):
+        EspLog._reset()
+        out = StringIO()
+        with patch.object(Console, 'is_terminal', True):
+            logger = EspLog()
+            logger._stdout = Console(file=out, force_terminal=True, highlight=False, emoji=False)
+            logger.set_verbosity(Verbosity.VERBOSE)
+            logger.stage()
+            logger.print('still visible')
+            logger.stage(finish=True)
+        assert 'still visible' in out.getvalue()
+
+    def test_stage_non_tty_keeps_stdout(self):
+        EspLog._reset()
+        out = StringIO()
+        logger = EspLog()
+        logger._stdout = Console(file=out, force_terminal=False, highlight=False, emoji=False)
+        logger.set_verbosity(Verbosity.NORMAL)
+        logger.stage()
+        logger.print('stays on disk')
+        logger.stage(finish=True)
+        assert 'stays on disk' in out.getvalue()
+
+    def test_stage_buffers_note_until_finish_on_tty(self):
+        EspLog._reset()
+        out = StringIO()
+        with patch.object(Console, 'is_terminal', True):
+            logger = EspLog()
+            logger._stdout = Console(file=out, force_terminal=True, highlight=False, emoji=False)
+            logger.set_verbosity(Verbosity.NORMAL)
+            logger.stage()
+            logger.note('only after finish')
+            assert 'only after finish' not in out.getvalue()
+            logger.stage(finish=True)
+        assert 'only after finish' in out.getvalue()
+
+    def test_stage_buffers_warn_until_finish_on_tty(self):
+        """Counterpart of :meth:`test_stage_buffers_note_until_finish_on_tty`
+        for :meth:`warn`: the formatted ``WARNING:`` line must go to stderr
+        (not stdout) and only appear after ``stage(finish=True)``.
+        """
+        EspLog._reset()
+        out = StringIO()
+        err = StringIO()
+        with patch.object(Console, 'is_terminal', True):
+            logger = EspLog()
+            logger._stdout = Console(file=out, force_terminal=True, highlight=False, emoji=False)
+            logger._stderr = Console(file=err, force_terminal=True, highlight=False, emoji=False)
+            logger.set_verbosity(Verbosity.NORMAL)
+            logger.stage()
+            logger.warn('only after finish')
+            assert 'only after finish' not in err.getvalue()
+            assert 'only after finish' not in out.getvalue()
+            logger.stage(finish=True)
+        assert 'only after finish' in err.getvalue()
+        assert 'WARNING:' in err.getvalue()
+        assert 'only after finish' not in out.getvalue(), 'warn must not leak to stdout when re-emitted'
+
+    def test_progress_bar_stage_bookkeeping(self):
+        """In-progress stdout progress inside a stage must count toward erase."""
+        EspLog._reset()
+        out = StringIO()
+        with patch.object(Console, 'is_terminal', True):
+            logger = EspLog()
+            logger._stdout = Console(file=out, force_terminal=True, highlight=False, emoji=False)
+            logger.set_verbosity(Verbosity.NORMAL)
+            logger.no_color = True
+            logger.stage()
+            logger.progress_bar(4, 4, prefix='Reading: ', bar_length=10)
+            assert logger._stage_newline_count == 1
+            assert not logger._stage_progress_visible
+            logger.stage(finish=True)
+            assert logger._stage_newline_count == 0
+
+            logger.stage()
+            logger.progress_bar(2, 4, prefix='Reading: ', bar_length=10)
+            assert logger._stage_newline_count == 0
+            assert logger._stage_progress_visible
+            logger.stage(finish=True)
+            assert not logger._stage_progress_visible
+
+    def test_stage_finish_with_mid_render_bar_erases_in_place(self):
+        """An unfinished progress bar at ``stage(finish=True)`` time must be
+        wiped with ``\\r`` + ``ERASE_IN_LINE`` on the *current* row — never
+        ``CURSOR_UP`` (which would walk above the stage and erase unrelated
+        output while leaving the partial bar visible).
+
+        Trigger: an exception inside ``with log.progress(...)`` skips
+        ``_ensure_complete()``, so the last bar render had ``end=''`` and the
+        cursor sits mid-line on the bar's row.
+        """
+        EspLog._reset()
+        out = StringIO()
+        with patch.object(Console, 'is_terminal', True):
+            logger = EspLog()
+            logger._stdout = Console(file=out, force_terminal=True, highlight=False, emoji=False)
+            logger.set_verbosity(Verbosity.NORMAL)
+            logger.no_color = True
+            logger.stage()
+            logger.print('status...')
+            logger.progress_bar(1, 4, prefix='Reading: ', bar_length=10)
+            logger.progress_bar(2, 4, prefix='Reading: ', bar_length=10)
+            assert logger._stage_progress_visible
+            assert logger._stage_newline_count == 1
+            logger.stage(finish=True)
+
+        raw = out.getvalue()
+        # The cleanup sequence emitted after the last bar must be:
+        # ``\r`` + ``ESC[2K`` (wipe the in-place bar row), then exactly one
+        # ``ESC[1A`` + ``ESC[2K`` pair for the one tracked newline. A second
+        # ``ESC[1A`` would mean we walked above the stage start.
+        cleanup = raw.rsplit('50.0% ', 1)[1]
+        cleanup_count = cleanup.count('\x1b[1A')
+        assert cleanup_count == 1, (
+            f'expected exactly 1 CURSOR_UP for the one tracked newline, got {cleanup_count} in {cleanup!r}'
+        )
+        assert '\r\x1b[2K' in cleanup, (
+            f'expected the bar row to be wiped in place with CR + ERASE_IN_LINE, got {cleanup!r}'
+        )
+
+    def test_progress_bar_outside_stage_does_not_poison_next_stage(self):
+        """A finalized progress bar emitted *before* ``stage()`` must not be
+        counted toward the next stage's erase. Regression for a state leak
+        where ``progress_bar`` incremented ``_stage_newline_count``
+        unconditionally and ``stage()`` did not reset it on entry — causing
+        ``stage(finish=True)`` to walk above the stage start and eat the bar
+        row that was supposed to remain on screen.
+        """
+        EspLog._reset()
+        out = StringIO()
+        with patch.object(Console, 'is_terminal', True):
+            logger = EspLog()
+            logger._stdout = Console(file=out, force_terminal=True, highlight=False, emoji=False)
+            logger.set_verbosity(Verbosity.NORMAL)
+            logger.no_color = True
+            logger.progress_bar(4, 4, prefix='Reading: ', bar_length=10)
+            # Counter must stay at 0 because no stage was active when the bar finalized.
+            assert logger._stage_newline_count == 0
+            logger.stage()
+            assert logger._stage_newline_count == 0
+            logger.print('inside stage')
+            assert logger._stage_newline_count == 1
+            with patch.object(logger, '_stage_erase_stdout', side_effect=lambda: self._erase_stdout_lines(logger)):
+                logger.stage(finish=True)
+            assert 'inside stage' not in out.getvalue()
+            assert 'Reading:' in out.getvalue(), 'bar row before the stage must survive stage finish'
+
+    def test_stage_restart_without_finish_resets_state(self):
+        """Calling ``stage()`` again without an intervening ``stage(finish=True)``
+        must start the new stage from a clean slate — stale buffered notes or
+        counter state from the unfinished stage must not bleed in.
+        """
+        EspLog._reset()
+        out = StringIO()
+        err = StringIO()
+        with patch.object(Console, 'is_terminal', True):
+            logger = EspLog()
+            logger._stdout = Console(file=out, force_terminal=True, highlight=False, emoji=False)
+            logger._stderr = Console(file=err, force_terminal=True, highlight=False, emoji=False)
+            logger.set_verbosity(Verbosity.NORMAL)
+            logger.stage()
+            logger.print('first stage line')
+            logger.note('stale note')
+            assert logger._stage_newline_count == 1
+            assert logger._stage_kept_lines
+            logger.stage()
+            assert logger._stage_newline_count == 0
+            assert not logger._stage_kept_lines
+            with patch.object(logger, '_stage_erase_stdout', side_effect=lambda: self._erase_stdout_lines(logger)):
+                logger.stage(finish=True)
+        assert 'stale note' not in out.getvalue()

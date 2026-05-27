@@ -109,6 +109,19 @@ The bar is always rendered at a fixed `bar_length` so the suffix (percent, M/N, 
 
 For full control over rendering, override `EspLogBase.progress_bar(cur_iter, total_iters, prefix, suffix, bar_length)` in a custom logger. `progress_bar` is **abstract**: every `EspLogBase` subclass must implement it (a no-op body is fine if the logger doesn't render bars).
 
+### Collapsible stages
+
+On an interactive terminal at normal verbosity, wrap noisy steps with `log.stage()` / `log.stage(finish=True)` (ported from esptool). Ordinary `log.print()` output inside the stage is erased on successful finish; `log.note()` and `log.warn()` are buffered and shown afterward. Verbose mode and non-TTY stdout disable collapsing (output is kept as printed).
+
+```python
+from esp_pylib.logger import log
+
+log.stage()
+log.print('Connecting...')
+# ...
+log.stage(finish=True)
+```
+
 ### Custom logger
 
 Subclass `EspLogBase`, implement its methods, then register your instance so all code using the shared logger goes through your implementation:

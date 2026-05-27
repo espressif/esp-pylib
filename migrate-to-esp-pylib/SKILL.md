@@ -1,7 +1,7 @@
 ---
 name: migrate-to-esp-pylib
 repository: https://github.com/espressif/esp-pylib
-description: Migrates Espressif Python tools to the shared esp-pylib library. Use when the user explicitly asks to migrate to esp-pylib, replace duplicated code (FatalError, logging, progress bars, IDE WebSocket, INI config, ROM ELF resolution, serial port discovery, DTR/RTS reset primitives, named reset sequences, Click ParamTypes and Click option classes), convert argparse CLIs to rich-click, or remove dependencies superseded by an esp_pylib.* module.
+description: Migrates Espressif Python tools to the shared esp-pylib library. Use when the user explicitly asks to migrate to esp-pylib, replace duplicated code (FatalError, logging, progress bars, collapsible log stages, IDE WebSocket, INI config, ROM ELF resolution, serial port discovery, DTR/RTS reset primitives, named reset sequences, Click ParamTypes and Click option classes), convert argparse CLIs to rich-click, or remove dependencies superseded by an esp_pylib.* module.
 ---
 
 # Migrate a Tool to esp-pylib

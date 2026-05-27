@@ -154,19 +154,32 @@ with log.progress(total=len(packages), description='Resolving') as bar:
 
 Useful kwargs: `file=sys.stderr` (keep stdout clean for machine output), `disable=True` (honour `--no-progress`), `bar_length=30` (column-stable suffix). For full control over rendering, override `EspLogBase.progress_bar(cur_iter, total_iters, prefix='', suffix='', bar_length=30)` — it's `@abstractmethod` on `EspLogBase`, so a from-scratch implementation **must** define it (a `pass` body is fine).
 
-**F) Subclass pattern:**
+**F) Collapsible stages (esptool-style):**
 
-If the tool needs extra UI helpers (collapsible stages, etc.), subclass `EspLog` rather than implementing `EspLogBase` from scratch:
+```python
+from esp_pylib.logger import log
+
+log.stage()
+log.print('Connecting...')  # erased on finish when stdout is a TTY and verbosity is normal
+log.note('Chip revision 3')  # buffered, printed after finish
+log.warn('Unexpected voltage')  # buffered to stderr after finish
+log.stage(finish=True)
+```
+
+Collapsing is disabled in verbose mode and when stdout is not a terminal (same idea as esptool's `--verbose` / non-smart terminal). `log.stage(finish=True)` without a matching start is a no-op.
+
+**G) Subclass pattern:**
+
+Subclass `EspLog` only when you need to restyle progress bars or change stage behaviour; use `EspLogBase` + `EspLog.set_logger()` to redirect all output (GUI, tests, log file):
 
 ```python
 from esp_pylib.logger import EspLog
 
 class MyToolLogger(EspLog):
-    def stage(self, finish=False): ...
-    def progress_bar(self, cur_iter, total_iters, prefix='', suffix='', bar_length=30): ...  # only override to restyle
+    def progress_bar(self, cur_iter, total_iters, prefix='', suffix='', bar_length=30): ...  # optional restyle
 ```
 
-Each subclass automatically gets its own singleton slot — no need to redeclare `instance = None` / `_initialized = False`. To redirect output entirely (test capture, GUI, log file), implement `EspLogBase` directly and install via `EspLog.set_logger(my_logger)`.
+Each subclass automatically gets its own singleton slot — no need to redeclare `instance = None` / `_initialized = False`.
 
 The `suggestion=` kwarg on `warn` / `err` / `die` is forwarded only to the IDE WebSocket — it never appears in the terminal.
 
