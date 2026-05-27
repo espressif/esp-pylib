@@ -206,6 +206,11 @@ class EspLogBase(ABC):
         pass
 
     @abstractmethod
+    def hint(self, message: str) -> None:
+        """Actionable hint to stdout (e.g. how to fix a failed dependency solve)."""
+        pass
+
+    @abstractmethod
     def debug(self, message: str) -> None:
         """Debug message (shown only in verbose mode)."""
         pass
@@ -375,6 +380,11 @@ class EspLog(EspLogBase):
         """Informational note (blue) to STDOUT with 'Note: ' prefix."""
         if self._verbosity != Verbosity.SILENT:
             self.print(f'[#0077BB]Note:[/#0077BB] {message}')
+
+    def hint(self, message: str) -> None:
+        """Actionable hint (cyan) to STDOUT with 'HINT: ' prefix."""
+        if self._verbosity != Verbosity.SILENT:
+            self.print(f'[#00A0A0]HINT:[/#00A0A0] {message}')
 
     def warn(self, message: str, suggestion: Optional[str] = None) -> None:
         """Warning message (yellow) to STDERR.

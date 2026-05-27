@@ -33,7 +33,7 @@ pip install esp-pylib[cli]
 
 - **`esp_pylib.constants`** — Cross-tool values shared by multiple modules: Espressif USB VID/PID, default ROM baud rate, and serial port name / exclude patterns used by port discovery.
 - **`esp_pylib.errors`** — A small exception hierarchy (`FatalError` and common subclasses such as `NoSerialPortFoundError`, `ConfigError`) for consistent error handling across tools.
-- **`esp_pylib.logger`** — Shared logging for Espressif Python tools: verbosity levels (`Verbosity`), the default Rich-based singleton (`log` / `EspLog`), and `EspLogBase` so you can plug in a custom implementation via `EspLog.set_logger()`. Also provides a progress-bar API (`log.progress(...)` context manager, the `ProgressTask` it yields, and the lower-level `log.progress_bar(...)` rendering hook).
+- **`esp_pylib.logger`** — Shared logging for Espressif Python tools: verbosity levels (`Verbosity`), the default Rich-based singleton (`log` / `EspLog`), and `EspLogBase` so you can plug in a custom implementation via `EspLog.set_logger()`. Helpers: `log.err` / `log.warn` (stderr, IDE-forwarded), `log.note` / `log.hint` (stdout; cyan `HINT:` distinct from warnings for color-vision deficiency), `log.debug` (verbose only). Also provides a progress-bar API (`log.progress(...)` context manager, the `ProgressTask` it yields, and the lower-level `log.progress_bar(...)` rendering hook).
 - **`esp_pylib.config`** — `ToolConfig` finds, parses, and caches a per-tool INI config file. Search order: env-var override → cwd → OS user-config dir (`~/.config/<tool>/` on POSIX, `~/AppData/Local/<tool>/` on Windows) → home. Files that don't contain the tool's section are silently skipped during search so candidates like `setup.cfg` / `tox.ini` are safe to list. `load()` returns `(ConfigParser, Optional[Path])`; `get(key, fallback)` is a convenience for single-value lookups. Both are cached after the first call; call `reload()` to re-scan. Pure stdlib — no extras required.
 - **`esp_pylib.rom`** — ROM ELF path resolution for `esp-idf-monitor` and `esp-coredump`. Reads `IDF_PATH` and `ESP_ROM_ELF_DIR` from the environment, looks up chip revision entries in `roms.json` (current and legacy ESP-IDF locations), and returns `{target}_rev{chip_rev}_rom.elf` under `ESP_ROM_ELF_DIR`. Pure stdlib — no extras required.
 - **`esp_pylib.ws`** — WebSocket client for IDE integration: sends structured JSON when an IDE sets the environment variable below. Requires `pip install esp-pylib[ide]` (pulls in `websockets`; effectively a no-op on Python 3.7 — see Installation note above). The connection is created lazily on first use; if no URL is set, log helpers no-op.
@@ -134,6 +134,9 @@ class MyLogger(EspLogBase):
 
     def note(self, message):
         print(f"Note: {message}")
+
+    def hint(self, message):
+        print(f"HINT: {message}")
 
     def debug(self, message):
         if self._verbosity == Verbosity.VERBOSE:
