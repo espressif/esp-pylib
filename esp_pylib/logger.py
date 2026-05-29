@@ -14,6 +14,8 @@ Any consumer tool (esptool, esp-coredump, ...) or integrator can provide
 a custom logger class by subclassing EspLogBase and calling set_logger().
 """
 
+from __future__ import annotations
+
 import contextvars
 import sys
 import time
@@ -23,10 +25,6 @@ from contextlib import contextmanager
 from typing import TYPE_CHECKING
 from typing import Any
 from typing import Iterator
-from typing import List
-from typing import Optional
-from typing import Tuple
-from typing import Union
 
 from rich.console import Console
 from rich.control import Control
@@ -48,7 +46,7 @@ __all__ = [
 ]
 
 # Current progress output stream for progress_bar() / Rich (None = default stdout).
-_progress_output: 'contextvars.ContextVar[Optional[Any]]' = contextvars.ContextVar(
+_progress_output: contextvars.ContextVar[Any | None] = contextvars.ContextVar(
     '_progress_output',
     default=None,
 )
@@ -67,7 +65,7 @@ def _progress_bar_use_ascii(console: Console) -> bool:
     return bool(options.legacy_windows or options.ascii_only)
 
 
-def _progress_bar_chars(console: Console) -> Tuple[str, str]:
+def _progress_bar_chars(console: Console) -> tuple[str, str]:
     """Bar glyphs for the padded plain renderer on *console*."""
     if _progress_bar_use_ascii(console):
         return ASCII_PROGRESS_CHAR, ASCII_HALF_PROGRESS_CHAR
@@ -92,7 +90,7 @@ class ProgressTask:
 
     def __init__(
         self,
-        logger: 'EspLogBase',
+        logger: EspLogBase,
         total: int,
         description: str,
         bar_length: int,
@@ -106,7 +104,7 @@ class ProgressTask:
         self._disabled = disabled
         self._start = time.monotonic()
 
-    def update(self, advance: int = 1, description: Optional[str] = None) -> None:
+    def update(self, advance: int = 1, description: str | None = None) -> None:
         if self._disabled:
             return
         if self._total <= 0:
@@ -191,12 +189,12 @@ class EspLogBase(ABC):
         pass
 
     @abstractmethod
-    def err(self, message: str, suggestion: Optional[str] = None) -> None:
+    def err(self, message: str, suggestion: str | None = None) -> None:
         """Error message to stderr."""
         pass
 
     @abstractmethod
-    def warn(self, message: str, suggestion: Optional[str] = None) -> None:
+    def warn(self, message: str, suggestion: str | None = None) -> None:
         """Warning message to stderr."""
         pass
 
@@ -215,7 +213,7 @@ class EspLogBase(ABC):
         """Debug message (shown only in verbose mode)."""
         pass
 
-    def die(self, message: str, exit_code: int = 1, suggestion: Optional[str] = None) -> None:
+    def die(self, message: str, exit_code: int = 1, suggestion: str | None = None) -> None:
         """Print error and exit."""
         self.err(message, suggestion)
         sys.exit(exit_code)
@@ -225,7 +223,7 @@ class EspLogBase(ABC):
         pass
 
     @abstractmethod
-    def set_verbosity(self, mode: Union[int, str]) -> None:
+    def set_verbosity(self, mode: int | str) -> None:
         """Set verbosity to Verbosity or convert string to Verbosity."""
         pass
 
@@ -250,7 +248,7 @@ class EspLogBase(ABC):
         *,
         file: Any = None,
         disable: bool = False,
-    ) -> Iterator['ProgressTask']:
+    ) -> Iterator[ProgressTask]:
         """
         Context manager that yields a :class:`ProgressTask`.
 
@@ -302,14 +300,14 @@ class EspLog(EspLogBase):
     stored on that exact class—subclasses get their own singleton.
     """
 
-    instance: Optional[EspLogBase] = None
+    instance: EspLogBase | None = None
     _verbosity: int = Verbosity.NORMAL
     _initialized: bool = False
     _stdout: Console
     _stderr: Console
     _stage_active: bool = False
     _stage_newline_count: int = 0
-    _stage_kept_lines: List[Tuple[Optional[Any], str]]
+    _stage_kept_lines: list[tuple[Any | None, str]]
     # In-progress :meth:`progress_bar` redraws on stdout without a trailing
     # newline; :meth:`_stage_erase_stdout` clears that line separately.
     _stage_progress_visible: bool = False
@@ -319,7 +317,7 @@ class EspLog(EspLogBase):
             cls.instance = super().__new__(cls)
         return cls.instance
 
-    def __init__(self, no_color: Optional[bool] = None):
+    def __init__(self, no_color: bool | None = None):
         if not self._initialized:
             self.no_color = no_color
             # Setting emoji to False to avoid interpreting e.g. mac addresses as emojis (":CD:" -> 💿)
@@ -332,6 +330,16 @@ class EspLog(EspLogBase):
             self._stage_progress_visible = False
             self._initialized = True
 
+    @property
+    def stdout(self) -> Console:
+        """Return the Console bound to the live sys.stdout."""
+        return self._live_console(self._stdout, sys.stdout)
+
+    @property
+    def stderr(self) -> Console:
+        """Return the Console bound to the live sys.stderr."""
+        return self._live_console(self._stderr, sys.stderr)
+
     def _stage_reset(self) -> None:
         self._stage_active = False
         self._stage_newline_count = 0
@@ -340,7 +348,7 @@ class EspLog(EspLogBase):
 
     def _stage_can_collapse(self) -> bool:
         """Stages are collapsible only when verbosity is NORMAL and stdout is an interactive terminal."""
-        return self._verbosity == Verbosity.NORMAL and self._stdout.is_terminal
+        return self._verbosity == Verbosity.NORMAL and self.stdout.is_terminal
 
     def _stage_track_newlines(self, *args: Any, **kwargs: Any) -> None:
         # Counts only the newlines we emit ourselves. If the terminal soft-wraps
@@ -360,7 +368,7 @@ class EspLog(EspLogBase):
             # (the bar was redrawn with ``\r`` + erase and no trailing ``\n``).
             # Rewind to column 0 and wipe the row in place; ``CURSOR_UP`` would
             # walk one line above the stage and corrupt unrelated output.
-            self._stdout.print(
+            self.stdout.print(
                 Control(ControlType.CARRIAGE_RETURN),
                 Control((ControlType.ERASE_IN_LINE, 2)),
                 end='',
@@ -370,12 +378,12 @@ class EspLog(EspLogBase):
             self._stage_progress_visible = False
         if self._stage_newline_count <= 0:
             return
-        controls: List[Control] = []
+        controls: list[Control] = []
         for _ in range(self._stage_newline_count):
             controls.append(Control((ControlType.CURSOR_UP, 1)))
             controls.append(Control((ControlType.ERASE_IN_LINE, 2)))
-        self._stdout.print(*controls, end='', markup=False, highlight=False)
-        self._stdout.file.flush()
+        self.stdout.print(*controls, end='', markup=False, highlight=False)
+        self.stdout.file.flush()
 
     def stage(self, finish: bool = False) -> None:
         """Start or finish a collapsible output stage.
@@ -431,7 +439,7 @@ class EspLog(EspLogBase):
             raise TypeError(f'Logger must implement the EspLogBase interface, got {type(instance).__name__!r}')
         cls.instance = instance
 
-    def _get_call_site(self) -> Tuple[str, int]:
+    def _get_call_site(self) -> tuple[str, int]:
         """Return (file, line) of the first caller outside this logger module.
 
         Walking the stack (rather than using a fixed index) keeps the reported
@@ -442,14 +450,14 @@ class EspLog(EspLogBase):
         this_file = __file__
         if this_file.endswith(('.pyc', '.pyo')):
             this_file = this_file[:-1]
-        frame: Optional[FrameType] = sys._getframe(1)
+        frame: FrameType | None = sys._getframe(1)
         while frame is not None:
             if frame.f_code.co_filename != this_file:
                 return (frame.f_code.co_filename, frame.f_lineno)
             frame = frame.f_back
         return ('<unknown>', 0)
 
-    def set_verbosity(self, mode: Union[int, str]) -> None:
+    def set_verbosity(self, mode: int | str) -> None:
         if isinstance(mode, str):
             try:
                 mode = Verbosity[mode.upper()]
@@ -457,17 +465,35 @@ class EspLog(EspLogBase):
                 raise ValueError(f'Invalid verbosity level: {mode}')
         self._verbosity = mode
 
+    def _live_console(self, cached: Console, stream: Any) -> Console:
+        """Console for ``stream``, following reassignment of the live stream.
+
+        ``Console`` binds its target stream once, at construction, whereas the
+        builtin ``print`` resolves ``sys.stdout``/``sys.stderr`` lazily on every
+        call. Return the cached console unless ``stream`` has been reassigned
+        since construction (e.g. by ``contextlib.redirect_stdout`` /
+        ``redirect_stderr``), in which case route through a fresh Console bound
+        to the live stream so output is not captured by the stale one.
+        """
+        if cached.file is stream:
+            return cached
+        # Mirror the cached stdout/stderr consoles (highlight=False, emoji=False)
+        # so redirected output renders identically to direct output.
+        return Console(file=stream, no_color=self.no_color, highlight=False, emoji=False)
+
     def print(self, *args, **kwargs) -> None:
-        """Plain output. Uses file= if provided (resolved at call time); else stdout. Suppressed when silent."""
+        """Plain output. Uses file= if provided (resolved at call time); else stdout. Suppressed when silent.
+        All output using rich is flushed to the console (even without a newline).
+        """
         file = kwargs.pop('file', None)
-        if file is None or file == sys.stdout:
+        if file is None or file is sys.stdout:
             self._stage_track_newlines(*args, **kwargs)
         if self._verbosity == Verbosity.SILENT and file is None:
             return
-        if file is None:
-            console = self._stdout
-        elif file == sys.stderr:
-            console = self._stderr
+        if file is None or file is sys.stdout:
+            console = self.stdout
+        elif file is sys.stderr:
+            console = self.stderr
         else:
             console = Console(file=file, no_color=self.no_color, highlight=True, emoji=False)
         console.print(*args, **kwargs)
@@ -492,7 +518,7 @@ class EspLog(EspLogBase):
         if self._verbosity != Verbosity.SILENT:
             self.print(f'[#00A0A0]HINT:[/#00A0A0] {message}')
 
-    def warn(self, message: str, suggestion: Optional[str] = None) -> None:
+    def warn(self, message: str, suggestion: str | None = None) -> None:
         """Warning message (yellow) to STDERR.
 
         Suggestions are only passed to websocket clients, not to the console.
@@ -508,7 +534,7 @@ class EspLog(EspLogBase):
             file, line = self._get_call_site()
             send_log_message('warning', message, suggestion, file, line)
 
-    def err(self, message: str, suggestion: Optional[str] = None) -> None:
+    def err(self, message: str, suggestion: str | None = None) -> None:
         """Error message (red, bold) to STDERR.
 
         Suggestions are only passed to websocket clients, not to the console.
@@ -518,12 +544,12 @@ class EspLog(EspLogBase):
             file, line = self._get_call_site()
             send_log_message('error', message, suggestion, file, line)
 
-    def _get_interactive_console(self) -> Optional[Console]:
+    def _get_interactive_console(self) -> Console | None:
         """Return a Console for in-place overwrite, or None for non-interactive output."""
         pf = _progress_output.get()
         if pf is sys.stderr:
-            if self._stderr.is_terminal:
-                return self._stderr
+            if self.stderr.is_terminal:
+                return self.stderr
             return None
         if pf is not None and pf is not sys.stdout:
             try:
@@ -535,8 +561,8 @@ class EspLog(EspLogBase):
                 # "not a TTY" rather than letting them crash logging.
                 pass
             return None
-        if self._stdout.is_terminal:
-            return self._stdout
+        if self.stdout.is_terminal:
+            return self.stdout
         return None
 
     def _get_progress_print_file(self) -> Any:
@@ -663,9 +689,9 @@ class EspLog(EspLogBase):
         c.print(bar_renderable, suffix_part, sep='', end=end, markup=False, highlight=False)
         if not end:
             c.file.flush()
-            if self._stage_active and self._stage_can_collapse() and interactive is not None and c is self._stdout:
+            if self._stage_active and self._stage_can_collapse() and interactive is not None and c is self.stdout:
                 self._stage_progress_visible = True
-        elif end == '\n' and c is self._stdout and self._stage_active:
+        elif end == '\n' and c is self.stdout and self._stage_active:
             # Mirror :meth:`_stage_track_newlines`: only count rows while a
             # stage is active, otherwise the counter leaks across stages and
             # the next ``stage(finish=True)`` over-erases.

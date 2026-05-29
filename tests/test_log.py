@@ -2,11 +2,12 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for esp_pylib.logger (EspLog, EspLogBase, set_logger, output)."""
 
+from __future__ import annotations
+
 import io
 import re
 import sys
 from io import StringIO
-from typing import Union
 from unittest.mock import patch
 
 import pytest
@@ -52,7 +53,7 @@ class CaptureLogger(EspLogBase):
     def die(self, message: str, exit_code: int = 1, suggestion=None):
         self.die_calls.append((message, exit_code, suggestion))
 
-    def set_verbosity(self, mode: Union[int, str]):
+    def set_verbosity(self, mode: int | str):
         self.verbosity = mode
 
     def progress_bar(
@@ -160,6 +161,47 @@ class TestPrint:
             logger.set_verbosity(Verbosity.VERBOSE)
             logger.debug('visible')
         assert out.getvalue() == 'visible\n'
+
+    def test_print_follows_reassigned_stdout(self):
+        # ``Console`` binds ``sys.stdout`` at construction. Build the logger
+        # first, *then* reassign ``sys.stdout`` (as ``contextlib.redirect_stdout``
+        # does). ``print`` must follow the new stream like the builtin ``print``
+        # did, instead of writing to the stream captured at construction.
+        EspLog._reset()
+        logger = EspLog()
+        out = StringIO()
+        with patch('sys.stdout', out):
+            logger.print('redirected')
+        assert out.getvalue() == 'redirected\n'
+
+    def test_print_silent_with_reassigned_stdout(self):
+        # Following a reassigned ``sys.stdout`` must not defeat ``--silent``:
+        # the rerouting swaps the Console while keeping ``file is None``
+        # semantics, so the silent gate still suppresses stdout output.
+        EspLog._reset()
+        logger = EspLog()
+        logger.set_verbosity(Verbosity.SILENT)
+        out = StringIO()
+        with patch('sys.stdout', out):
+            logger.print('should be suppressed')
+        assert out.getvalue() == ''
+
+    def test_warn_err_follow_reassigned_stderr(self):
+        # Mirror of ``test_print_follows_reassigned_stdout`` for stderr: build the
+        # logger first, *then* reassign ``sys.stderr`` (as
+        # ``contextlib.redirect_stderr`` does). ``warn``/``err`` must follow the
+        # new stream instead of writing to the one captured at construction.
+        EspLog._reset()
+        logger = EspLog()
+        err = StringIO()
+        with patch('sys.stderr', err):
+            logger.warn('reassigned warning')
+            logger.err('reassigned error')
+        text = err.getvalue()
+        assert 'WARNING:' in text
+        assert 'reassigned warning' in text
+        assert 'ERROR:' in text
+        assert 'reassigned error' in text
 
 
 class TestErrorWarningNote:
@@ -841,6 +883,10 @@ class TestProgressBarNoHighlight:
 
 
 class TestStage:
+    # ``print`` follows the live ``sys.stdout`` (see ``_live_console``), so the
+    # cached ``_stdout`` console only receives output when its ``.file`` *is*
+    # the current ``sys.stdout``. Each test therefore patches ``sys.stdout`` /
+    # ``sys.stderr`` to the same buffers the cached consoles write to.
     @staticmethod
     def _erase_stdout_lines(logger: EspLog) -> None:
         """StringIO does not interpret cursor controls — drop the last N stdout lines."""
@@ -864,7 +910,7 @@ class TestStage:
         EspLog._reset()
         out = StringIO()
         err = StringIO()
-        with patch.object(Console, 'is_terminal', True):
+        with patch.object(Console, 'is_terminal', True), patch('sys.stdout', out), patch('sys.stderr', err):
             logger = EspLog()
             logger._stdout = Console(file=out, force_terminal=True, highlight=False, emoji=False)
             logger._stderr = Console(file=err, force_terminal=True, highlight=False, emoji=False)
@@ -884,7 +930,7 @@ class TestStage:
     def test_stage_verbose_keeps_all_output(self):
         EspLog._reset()
         out = StringIO()
-        with patch.object(Console, 'is_terminal', True):
+        with patch.object(Console, 'is_terminal', True), patch('sys.stdout', out):
             logger = EspLog()
             logger._stdout = Console(file=out, force_terminal=True, highlight=False, emoji=False)
             logger.set_verbosity(Verbosity.VERBOSE)
@@ -896,18 +942,19 @@ class TestStage:
     def test_stage_non_tty_keeps_stdout(self):
         EspLog._reset()
         out = StringIO()
-        logger = EspLog()
-        logger._stdout = Console(file=out, force_terminal=False, highlight=False, emoji=False)
-        logger.set_verbosity(Verbosity.NORMAL)
-        logger.stage()
-        logger.print('stays on disk')
-        logger.stage(finish=True)
+        with patch('sys.stdout', out):
+            logger = EspLog()
+            logger._stdout = Console(file=out, force_terminal=False, highlight=False, emoji=False)
+            logger.set_verbosity(Verbosity.NORMAL)
+            logger.stage()
+            logger.print('stays on disk')
+            logger.stage(finish=True)
         assert 'stays on disk' in out.getvalue()
 
     def test_stage_buffers_note_until_finish_on_tty(self):
         EspLog._reset()
         out = StringIO()
-        with patch.object(Console, 'is_terminal', True):
+        with patch.object(Console, 'is_terminal', True), patch('sys.stdout', out):
             logger = EspLog()
             logger._stdout = Console(file=out, force_terminal=True, highlight=False, emoji=False)
             logger.set_verbosity(Verbosity.NORMAL)
@@ -925,7 +972,7 @@ class TestStage:
         EspLog._reset()
         out = StringIO()
         err = StringIO()
-        with patch.object(Console, 'is_terminal', True):
+        with patch.object(Console, 'is_terminal', True), patch('sys.stdout', out), patch('sys.stderr', err):
             logger = EspLog()
             logger._stdout = Console(file=out, force_terminal=True, highlight=False, emoji=False)
             logger._stderr = Console(file=err, force_terminal=True, highlight=False, emoji=False)
@@ -943,7 +990,7 @@ class TestStage:
         """In-progress stdout progress inside a stage must count toward erase."""
         EspLog._reset()
         out = StringIO()
-        with patch.object(Console, 'is_terminal', True):
+        with patch.object(Console, 'is_terminal', True), patch('sys.stdout', out):
             logger = EspLog()
             logger._stdout = Console(file=out, force_terminal=True, highlight=False, emoji=False)
             logger.set_verbosity(Verbosity.NORMAL)
@@ -974,7 +1021,7 @@ class TestStage:
         """
         EspLog._reset()
         out = StringIO()
-        with patch.object(Console, 'is_terminal', True):
+        with patch.object(Console, 'is_terminal', True), patch('sys.stdout', out):
             logger = EspLog()
             logger._stdout = Console(file=out, force_terminal=True, highlight=False, emoji=False)
             logger.set_verbosity(Verbosity.NORMAL)
@@ -1011,7 +1058,7 @@ class TestStage:
         """
         EspLog._reset()
         out = StringIO()
-        with patch.object(Console, 'is_terminal', True):
+        with patch.object(Console, 'is_terminal', True), patch('sys.stdout', out):
             logger = EspLog()
             logger._stdout = Console(file=out, force_terminal=True, highlight=False, emoji=False)
             logger.set_verbosity(Verbosity.NORMAL)
@@ -1036,7 +1083,7 @@ class TestStage:
         EspLog._reset()
         out = StringIO()
         err = StringIO()
-        with patch.object(Console, 'is_terminal', True):
+        with patch.object(Console, 'is_terminal', True), patch('sys.stdout', out), patch('sys.stderr', err):
             logger = EspLog()
             logger._stdout = Console(file=out, force_terminal=True, highlight=False, emoji=False)
             logger._stderr = Console(file=err, force_terminal=True, highlight=False, emoji=False)
