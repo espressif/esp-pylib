@@ -30,7 +30,6 @@ from typing import Union
 from rich.console import Console
 from rich.control import Control
 from rich.control import ControlType
-from rich.markup import escape
 from rich.progress_bar import ProgressBar
 
 from esp_pylib.ws import is_enabled as _ws_is_enabled
@@ -282,6 +281,13 @@ class EspLog(EspLogBase):
     """
     Singleton logger for Espressif tools.
 
+    Rich markup: the output methods (``print``, ``debug``, ``note``, ``hint``,
+    ``warn``, ``err``) render the message as Rich markup and do **not** escape
+    it, so callers can style parts of the text (e.g.
+    ``log.note('Wrote [bold]flash[/bold]')``). Callers passing dynamic/untrusted
+    text that may contain ``[`` / ``]`` (paths, identifiers, regexes) must escape
+    it themselves via :func:`rich.markup.escape`.
+
     Subclassing note: tools such as esptool extend ``EspLog`` with extra helpers
     while keeping ``EspLogBase`` compatibility. Inherited class attributes are
     shared: if ``__new__`` used ``cls.instance is None``, a subclass would read
@@ -372,9 +378,9 @@ class EspLog(EspLogBase):
         console.print(*args, **kwargs)
 
     def debug(self, message: str) -> None:
-        """Debug message. Only shown in verbose mode."""
+        """Debug message (dim) to STDOUT. Only shown in verbose mode."""
         if self._verbosity == Verbosity.VERBOSE:
-            self.print(f'[dim]{escape(message)}[/dim]')
+            self.print(f'[dim]{message}[/dim]')
 
     def note(self, message: str) -> None:
         """Informational note (blue) to STDOUT with 'NOTE: ' prefix."""
