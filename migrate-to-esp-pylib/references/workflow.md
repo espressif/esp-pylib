@@ -155,10 +155,15 @@ with log.progress(total=len(packages), description='Resolving') as bar:
 Useful kwargs: `file=sys.stderr` (keep stdout clean for machine output), `disable=True` (honour `--no-progress`), `bar_length=30` (column-stable suffix), `unit='B'` (humanise byte M/N with 1024-based prefixes as `1.20MB/5.00MB`). For full control over rendering, override `EspLogBase.progress_bar(cur_iter, total_iters, prefix='', suffix='', bar_length=30)` — it's `@abstractmethod` on `EspLogBase`, so a from-scratch implementation **must** define it (a `pass` body is fine). The `progress_bar` signature is unchanged from legacy esptool.
 
 ```python
-# Replace tqdm byte progress
 with log.progress(total=size, description='Uploading', unit='B') as bar:
     bar.update(chunk_len)
+
+# Replace tqdm unbounded counter (bar_format='{desc}: {n_fmt}')
+with log.counter(description='Collecting required components') as counter:
+    counter.update(1)
 ```
+
+Optional: override `counter_line(prefix, suffix, final=False)` for custom counter rendering (default no-op on `EspLogBase`; `EspLog` implements it).
 
 **F) Collapsible stages (esptool-style):**
 
