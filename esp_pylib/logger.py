@@ -80,6 +80,37 @@ def _format_elapsed(seconds: float) -> str:
     return f'{mins}:{secs:02d}'
 
 
+_BYTE_UNIT_SUFFIXES = ('B', 'kB', 'MB', 'GB')
+
+
+def _format_bytes(value: int) -> str:
+    """Format a byte count with 1024-based prefixes (e.g. ``1.20MB``).
+
+    Uses a 1024 divisor (binary) but keeps the familiar ``kB``/``MB``/``GB``
+    labels. Caps at the largest suffix in ``_BYTE_UNIT_SUFFIXES`` (``GB``);
+    larger values just keep growing the GB count, which is fine for the byte
+    ranges these progress bars realistically see.
+    """
+    if value < 0:
+        value = 0
+    if value < 1024:
+        return f'{value}B'
+    size = float(value)
+    for suffix in _BYTE_UNIT_SUFFIXES[1:]:
+        size /= 1024.0
+        if size < 1024.0:
+            return f'{size:.2f}{suffix}'
+    return f'{size:.2f}{_BYTE_UNIT_SUFFIXES[-1]}'
+
+
+def _format_progress_count(value: int, unit: str | None) -> str:
+    if unit is None:
+        return str(value)
+    if unit == 'B':
+        return _format_bytes(value)
+    return str(value)
+
+
 class ProgressTask:
     """
     Stateful progress tracker used by `EspLogBase.progress`.
@@ -87,7 +118,7 @@ class ProgressTask:
     `EspLogBase.progress_bar` so subclasses can override rendering.
     """
 
-    __slots__ = ('_bar_length', '_current', '_description', '_disabled', '_logger', '_start', '_total')
+    __slots__ = ('_bar_length', '_current', '_description', '_disabled', '_logger', '_start', '_total', '_unit')
 
     def __init__(
         self,
@@ -96,6 +127,7 @@ class ProgressTask:
         description: str,
         bar_length: int,
         disabled: bool,
+        unit: str | None,
     ) -> None:
         self._logger = logger
         self._total = total
@@ -103,6 +135,7 @@ class ProgressTask:
         self._description = description
         self._bar_length = bar_length
         self._disabled = disabled
+        self._unit = unit
         self._start = time.monotonic()
 
     def update(self, advance: int = 1, description: str | None = None) -> None:
@@ -136,8 +169,9 @@ class ProgressTask:
         elapsed = time.monotonic() - self._start
         time_str = _format_elapsed(elapsed)
         prefix = f'{self._description} ' if self._description else ''
-        # Keep the M/N format consistent with the non-zero case ("0/0" when total == 0).
-        suffix = f' {self._current}/{self._total} [{time_str}]'
+        cur = _format_progress_count(self._current, self._unit)
+        total = _format_progress_count(self._total, self._unit)
+        suffix = f' {cur}/{total} [{time_str}]'
         self._logger.progress_bar(
             self._current,
             self._total,
@@ -249,6 +283,7 @@ class EspLogBase(ABC):
         *,
         file: Any = None,
         disable: bool = False,
+        unit: str | None = None,
     ) -> Iterator[ProgressTask]:
         """
         Context manager that yields a `ProgressTask`.
@@ -257,11 +292,17 @@ class EspLogBase(ABC):
         elapsed time and M/N) and calls `progress_bar` so tool-specific
         subclasses keep a single rendering hook.
 
+        Pass ``unit='B'`` to render M/N byte totals with 1024-based prefixes
+        (e.g. ``1.20MB/5.00MB`` instead of raw integers).
+
         :param file: Output stream for the bar (default: stdout). Use ``sys.stderr``
             when stdout must stay clean (e.g. SPDX on stdout).
         :param disable: If True, `ProgressTask.update` is a no-op (e.g. ``--no-progress``).
+        :param unit: Quantity unit for the M/N suffix. Only ``'B'`` (bytes) is currently
+            special-cased (humanised with 1024-based ``kB``/``MB``/``GB`` prefixes); any
+            other value is ignored and the counts render as raw integers.
         """
-        task = ProgressTask(self, total, description, bar_length, disabled=disable)
+        task = ProgressTask(self, total, description, bar_length, disabled=disable, unit=unit)
         token = _progress_output.set(file)
         try:
             # When ``total == 0`` the body's loop won't iterate, so `update`

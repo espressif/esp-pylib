@@ -163,6 +163,13 @@ Optional keyword arguments:
 
 - `file=sys.stderr` — render the bar on stderr (e.g. when stdout must stay clean for machine-readable output like SPDX).
 - `disable=True` — turn the bar into a no-op (e.g. when a tool's `--no-progress` flag is set).
+- `unit='B'` — humanise the M/N suffix for byte totals using 1024-based `kB`/`MB`/`GB` prefixes (e.g. `1.20MB/5.00MB` instead of raw integers).
+
+```python
+# Byte upload with human-readable totals
+with log.progress(total=file_size, description='Uploading', unit='B') as bar:
+    bar.update(bytes_sent)
+```
 
 If the body of the `with` block raises, the bar is **not** auto-completed to 100% — you see the last real update before the traceback.
 

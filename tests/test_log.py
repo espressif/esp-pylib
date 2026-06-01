@@ -739,6 +739,26 @@ class TestProgress:
         # The key invariant: never goes negative.
         assert all(c >= 0 for c in currents)
 
+    def test_progress_unit_bytes(self):
+        custom = CaptureLogger()
+        EspLog.set_logger(custom)
+        current = EspLog()
+        with current.progress(total=5_242_880, description='Uploading', unit='B') as bar:
+            bar.update(1_258_291)
+        suffix = custom.progress_bar_calls[0][3]
+        assert '1.20MB/5.00MB' in suffix
+
+    def test_progress_unit_bytes_tty(self):
+        EspLog._reset()
+        out = StringIO()
+        fake_console = Console(file=out, force_terminal=True, highlight=False, emoji=False)
+        with patch('sys.stdout', out):
+            logger = EspLog()
+            with patch.object(logger, '_get_interactive_console', return_value=fake_console):
+                with logger.progress(total=5_242_880, description='Up', unit='B') as bar:
+                    bar.update(1_258_291)
+        assert '1.20MB/5.00MB' in out.getvalue()
+
 
 class TestProgressBarClamping:
     def test_progress_bar_clamps_overshoot(self):
