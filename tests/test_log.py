@@ -291,6 +291,80 @@ class TestDebug:
         assert err.getvalue() == ''
 
 
+class TestInfoStream:
+    """`set_info_stream` redirects note/hint/debug without changing their signatures."""
+
+    def test_note_hint_debug_default_to_stdout(self):
+        EspLog._reset()
+        out, err = StringIO(), StringIO()
+        with patch('sys.stdout', out), patch('sys.stderr', err):
+            logger = EspLog()
+            logger.set_verbosity(Verbosity.VERBOSE)
+            logger.note('a note')
+            logger.hint('a hint')
+            logger.debug('a debug')
+        assert 'a note' in out.getvalue()
+        assert 'a hint' in out.getvalue()
+        assert 'a debug' in out.getvalue()
+        assert err.getvalue() == ''
+
+    def test_set_info_stream_routes_note_hint_debug_to_stderr(self):
+        EspLog._reset()
+        out, err = StringIO(), StringIO()
+        with patch('sys.stdout', out), patch('sys.stderr', err):
+            logger = EspLog()
+            logger.set_verbosity(Verbosity.VERBOSE)
+            logger.set_info_stream(sys.stderr)
+            logger.note('a note')
+            logger.hint('a hint')
+            logger.debug('a debug')
+        # stdout stays clean (machine-readable use case); info goes to stderr.
+        assert out.getvalue() == ''
+        text = err.getvalue()
+        assert 'NOTE:' in text and 'a note' in text
+        assert 'HINT:' in text and 'a hint' in text
+        assert 'a debug' in text
+
+    def test_err_warn_unaffected_by_info_stream(self):
+        EspLog._reset()
+        out, err = StringIO(), StringIO()
+        with patch('sys.stdout', out), patch('sys.stderr', err):
+            logger = EspLog()
+            logger.set_info_stream(sys.stderr)
+            logger.err('boom')
+            logger.warn('careful')
+        # err/warn already target stderr; redirecting info must not push anything to stdout.
+        assert out.getvalue() == ''
+        assert 'ERROR:' in err.getvalue()
+        assert 'WARNING:' in err.getvalue()
+
+    def test_set_info_stream_none_restores_stdout(self):
+        EspLog._reset()
+        out, err = StringIO(), StringIO()
+        with patch('sys.stdout', out), patch('sys.stderr', err):
+            logger = EspLog()
+            logger.set_info_stream(sys.stderr)
+            logger.set_info_stream(None)
+            logger.note('back on stdout')
+        assert 'back on stdout' in out.getvalue()
+        assert 'back on stdout' not in err.getvalue()
+
+    def test_set_info_stream_noop_on_custom_logger(self):
+        EspLog._reset()
+        custom = CaptureLogger()
+        EspLog.set_logger(custom)
+        log.set_info_stream(sys.stderr)  # must not raise on EspLogBase no-op
+
+    def test_set_info_stream_custom_stream(self):
+        EspLog._reset()
+        info = StringIO()
+        with patch('sys.stdout', StringIO()), patch('sys.stderr', StringIO()):
+            logger = EspLog()
+            logger.set_info_stream(info)
+            logger.note('on custom stream')
+        assert 'on custom stream' in info.getvalue()
+
+
 class TestDie:
     def test_die_calls_error_and_exits(self):
         EspLog._reset()

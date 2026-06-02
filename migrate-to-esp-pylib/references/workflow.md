@@ -105,6 +105,8 @@ For idf.py-style build hints (`yellow_print("HINT: …")` in `idf_py_actions/too
 
 `log.print` / `err` / `warn` / `note` / `hint` / `debug` render the message as Rich markup and do **not** escape it, so callers can style parts of the text (`log.note('Wrote [bold]flash[/bold]')`). When migrating a call whose message embeds dynamic text that may contain `[` / `]` (file paths, identifiers, regexes), wrap that text with `rich.markup.escape(...)` to avoid mis-rendering or markup parse errors.
 
+If the tool must keep stdout reserved for machine-readable output (e.g. a tool that emits structured data such as JSON on stdout), call `log.set_info_stream(sys.stderr)` once at startup so `note` / `hint` / `debug` go to stderr alongside `err` / `warn` (pass `None` to restore the stdout default). This is a logger-level switch, so the `note` / `hint` / `debug` method signatures stay frozen — don't add a `file=` parameter to them (it would break custom loggers built from the `EspLogBase` template). The stream is captured at call time and is not updated if `sys.stderr` is later reassigned; call `set_info_stream` before any redirection.
+
 Tools that wrap **raw bytes** with pre-encoded ANSI byte constants for serial-data coloring should keep those byte-level helpers local.
 
 **B) Python `logging` module:**

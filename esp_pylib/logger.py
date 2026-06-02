@@ -320,6 +320,15 @@ class EspLogBase(ABC):
         """Set verbosity to Verbosity or convert string to Verbosity."""
         pass
 
+    def set_info_stream(self, stream: Any) -> None:
+        """Route ``note`` / ``hint`` / ``debug`` output to *stream* (no-op by default).
+
+        The default ``EspLog`` implementation honours this; custom loggers may
+        override it. The default no-op keeps ``log.set_info_stream(...)`` safe
+        when a custom logger is installed via ``EspLog.set_logger()``.
+        """
+        pass
+
     @abstractmethod
     def progress_bar(
         self,
@@ -455,6 +464,9 @@ class EspLog(EspLogBase):
     # plus that call's overrides. _make_console() reads _options.
     _options_default: dict[str, Any]
     _options: dict[str, Any]
+    # Target stream for note/hint/debug. None = stdout (default). Tools that must
+    # keep stdout machine-clean call set_info_stream(sys.stderr).
+    _info_stream: Any = None
     _stage_active: bool = False
     _stage_newline_count: int = 0
     _stage_kept_lines: list[tuple[Any | None, tuple[Any, ...]]]
@@ -491,6 +503,7 @@ class EspLog(EspLogBase):
             self._stage_newline_count = 0
             self._stage_kept_lines = []
             self._stage_progress_visible = False
+            self._info_stream = None
             self._initialized = True
 
     def _make_console(self, **overrides: Any) -> Console:
@@ -673,6 +686,26 @@ class EspLog(EspLogBase):
                 raise ValueError(f'Invalid verbosity level: {mode}')
         self._verbosity = mode
 
+    def set_info_stream(self, stream: Any) -> None:
+        """Route ``note`` / ``hint`` / ``debug`` output to *stream*.
+
+        The default is stdout. Pass ``sys.stderr`` (or ``None`` to restore the
+        default) when stdout must stay reserved for machine-readable output
+        (e.g. a tool that emits structured data such as JSON on stdout).
+        ``err`` and ``warn`` are unaffected; they always go to stderr.
+
+        This keeps the ``note`` / ``hint`` / ``debug`` method signatures frozen
+        (they are part of the public ``EspLogBase`` logger template). Custom
+        loggers inherit a no-op ``EspLogBase.set_info_stream`` unless they
+        override it.
+
+        The stream object is stored at call time and is not updated if
+        ``sys.stderr`` (or another target) is later reassigned — unlike
+        ``err`` / ``warn``, which resolve ``sys.stderr`` on every call. Call
+        once at startup before any redirection.
+        """
+        self._info_stream = stream
+
     def _live_console(self, cached: Console, stream: Any) -> Console:
         """Console for ``stream``, following reassignment of the live stream.
 
@@ -706,24 +739,33 @@ class EspLog(EspLogBase):
         console.print(*args, **kwargs)
 
     def debug(self, *args: Any) -> None:
-        """Debug message (dim) to STDOUT. Only shown in verbose mode."""
+        """Debug message (dim). Only shown in verbose mode.
+
+        Goes to stdout by default; redirected by `set_info_stream`.
+        """
         if self._verbosity == Verbosity.VERBOSE:
-            self.print(*args, style='dim')
+            self.print(*args, style='dim', file=self._info_stream)
 
     def note(self, *args: Any) -> None:
-        """Informational note (blue) to STDOUT with 'NOTE: ' prefix."""
+        """Informational note (blue) with 'NOTE: ' prefix.
+
+        Goes to stdout by default; redirected by `set_info_stream`.
+        """
         if self._verbosity == Verbosity.SILENT:
             return
         parts = ('[#0077BB]NOTE:[/#0077BB]', *args)
         if self._stage_active and self._stage_can_collapse():
-            self._stage_kept_lines.append((None, parts))
+            self._stage_kept_lines.append((self._info_stream, parts))
             return
-        self.print(*parts)
+        self.print(*parts, file=self._info_stream)
 
     def hint(self, *args: Any) -> None:
-        """Actionable hint (cyan) to STDOUT with 'HINT: ' prefix."""
+        """Actionable hint (cyan) with 'HINT: ' prefix.
+
+        Goes to stdout by default; redirected by `set_info_stream`.
+        """
         if self._verbosity != Verbosity.SILENT:
-            self.print('[#00A0A0]HINT:[/#00A0A0]', *args)
+            self.print('[#00A0A0]HINT:[/#00A0A0]', *args, file=self._info_stream)
 
     def warn(self, *args: Any, suggestion: str | None = None) -> None:
         """Warning message (yellow) to STDERR.
