@@ -29,19 +29,80 @@ Optional **CLI** helpers (Click parameter types — pulls in `rich-click` and `c
 pip install esp-pylib[cli]
 ```
 
+## Quick start
+
+> [!TIP]
+> If you are migrating an existing Espressif Python tool, the recommended path is the [migration skill](#migration-skill-for-ai-coding-agents) — an AI coding agent applies the changes for you. This manual quick start is here for new code, for migrating by hand, or in case the skill doesn't work in your setup.
+
+Install the base package (`pip install esp-pylib`) and use the shared logger — the most common entry point. The `log` singleton is ready to import; no setup required.
+
+```python
+from esp_pylib.logger import log
+
+log.print('Plain output to stdout')
+log.note('Informational note')
+log.hint('Actionable hint on how to proceed')
+log.warn('Something looks off')          # stderr
+log.err('Something failed')              # stderr
+log.debug('Only shown in verbose mode')  # stdout, verbose only
+```
+
+On a color-capable terminal the helpers are styled distinctly (blue `NOTE:`, teal `HINT:`, bold yellow `WARNING:`, red `ERROR:`):
+
+![esp-pylib log output](./docs/images/log-output.png)
+
+Control how much is shown (e.g. from a `--verbose` / `--quiet` flag):
+
+```python
+from esp_pylib.logger import log, Verbosity
+
+log.set_verbosity(Verbosity.VERBOSE)  # also accepts 'VERBOSE', 'NORMAL', 'SILENT'
+```
+
+Show in-place progress for a bounded loop:
+
+```python
+from esp_pylib.logger import log
+
+with log.progress(total=len(items), description='Processing') as bar:
+    for item in items:
+        do_work(item)
+        bar.update(1)
+```
+
+Raise `FatalError` for unrecoverable conditions and handle it once at your CLI entry point:
+
+```python
+from esp_pylib.errors import FatalError
+from esp_pylib.logger import log
+
+
+def main():
+    raise FatalError('Could not connect to the device')
+
+
+if __name__ == '__main__':
+    try:
+        main()
+    except FatalError as e:
+        log.die(str(e), exit_code=2)
+```
+
+That's enough for most tools. See [Modules](#modules) below for config files, serial port helpers, IDE integration, and more.
+
 ## Modules
 
-- **`esp_pylib.constants`** — Cross-tool values shared by multiple modules: Espressif USB VID/PID, default ROM baud rate, and serial port name / exclude patterns used by port discovery.
-- **`esp_pylib.errors`** — A small exception hierarchy (`FatalError` and common subclasses such as `NoSerialPortFoundError`, `ConfigError`) for consistent error handling across tools.
-- **`esp_pylib.logger`** — Shared logging for Espressif Python tools: verbosity levels (`Verbosity`), the default Rich-based singleton (`log` / `EspLog`), and `EspLogBase` so you can plug in a custom implementation via `EspLog.set_logger()`. Helpers: `log.err` / `log.warn` (stderr, IDE-forwarded), `log.note` / `log.hint` (stdout; cyan `HINT:` distinct from warnings for color-vision deficiency), `log.debug` (verbose only). Also provides a progress-bar API (`log.progress(...)` context manager, the `ProgressTask` it yields, and the lower-level `log.progress_bar(...)` rendering hook).
-- **`esp_pylib.config`** — `ToolConfig` finds, parses, and caches a per-tool INI config file. Search order: env-var override → cwd → OS user-config dir (`~/.config/<tool>/` on POSIX, `~/AppData/Local/<tool>/` on Windows) → home. Files that don't contain the tool's section are silently skipped during search so candidates like `setup.cfg` / `tox.ini` are safe to list. `load()` returns `(ConfigParser, Optional[Path])`; `get(key, fallback)` is a convenience for single-value lookups. Both are cached after the first call; call `reload()` to re-scan. Pure stdlib — no extras required.
-- **`esp_pylib.rom`** — ROM ELF path resolution for `esp-idf-monitor` and `esp-coredump`. Reads `IDF_PATH` and `ESP_ROM_ELF_DIR` from the environment, looks up chip revision entries in `roms.json` (current and legacy ESP-IDF locations), and returns `{target}_rev{chip_rev}_rom.elf` under `ESP_ROM_ELF_DIR`. Pure stdlib — no extras required.
-- **`esp_pylib.ws`** — WebSocket client for IDE integration: sends structured JSON when an IDE sets the environment variable below. Requires `pip install esp-pylib[ide]` (pulls in `websockets`; effectively a no-op on Python 3.7 — see Installation note above). The connection is created lazily on first use; if no URL is set, log helpers no-op.
-- **`esp_pylib.excepthook`** — Hooks (`sys.excepthook` and `threading.excepthook`, Python 3.8+) to report uncaught exceptions to the IDE over the same WebSocket channel, then chain to the previous hooks so normal stderr behavior is unchanged. Use together with `esp-pylib[ide]`.
-- **`esp_pylib.serial_ports`** — Serial port discovery, filtering, and sorting. Wraps pyserial's `comports()` with Espressif-aware priority. Exposes `get_port_list`, `get_port_names`, `detect_port`, `get_port_vid_pid`, and `parse_port_filters` (for `key=value` CLI flags like `vid=0x303A`). Requires `pip install esp-pylib[serial]`.
-- **`esp_pylib.serial_reset`** — DTR/RTS primitives and named reset sequences shared between `esptool` and `esp-idf-monitor`. Primitives: `set_dtr`, `set_rts`, `set_dtr_rts`. Sequences: `classic_bootloader_reset`, `unix_tight_bootloader_reset`, `usb_jtag_bootloader_reset`, `hard_reset` — each takes `flow_control=True` for adapters with always-on hardware flow control (e.g. the SiLabs CP2102C). `uses_hardware_flow_control((vid, pid))` decides that flag against the shared `HARDWARE_FLOW_CONTROL_VID_PIDS` list in `esp_pylib.constants`. Also includes a parser/executor for custom reset sequences in the `D0|R1|U1,0|W0.1` format. Requires `pip install esp-pylib[serial]`.
-- **`esp_pylib.cli_types`** — Reusable Click `ParamType`s: `SerialPortType`, `AnyIntType`, `AutoSizeType`, `BaudRateType`, and `arg_auto_int()`. Requires `pip install esp-pylib[cli]`.
-- **`esp_pylib.cli_options`** — Reusable Click pieces: `EspRichGroup` (root group for subcommand CLIs using `OptionEatAll`), `MutuallyExclusiveOption` (argparse-style exclusive groups), and `OptionEatAll` (consume values until the next flag or subcommand). Requires `pip install esp-pylib[cli]`.
+- **[`esp_pylib.constants`](./esp_pylib/constants.py)** — Cross-tool values shared by multiple modules: Espressif USB VID/PID, default ROM baud rate, and serial port name / exclude patterns used by port discovery.
+- **[`esp_pylib.errors`](./esp_pylib/errors.py)** — A small exception hierarchy (`FatalError` and common subclasses such as `NoSerialPortFoundError`, `ConfigError`) for consistent error handling across tools.
+- **[`esp_pylib.logger`](./esp_pylib/logger.py)** — Shared logging for Espressif Python tools: verbosity levels (`Verbosity`), the default Rich-based singleton (`log` / `EspLog`), and `EspLogBase` so you can plug in a custom implementation via `EspLog.set_logger()`. Helpers: `log.err` / `log.warn` (stderr, IDE-forwarded), `log.note` / `log.hint` (stdout; cyan `HINT:` distinct from warnings for color-vision deficiency), `log.debug` (verbose only). Also provides a progress-bar API (`log.progress(...)` context manager, the `ProgressTask` it yields, and the lower-level `log.progress_bar(...)` rendering hook).
+- **[`esp_pylib.config`](./esp_pylib/config.py)** — `ToolConfig` finds, parses, and caches a per-tool INI config file. Search order: env-var override → cwd → OS user-config dir (`~/.config/<tool>/` on POSIX, `~/AppData/Local/<tool>/` on Windows) → home. Files that don't contain the tool's section are silently skipped during search so candidates like `setup.cfg` / `tox.ini` are safe to list. `load()` returns `(ConfigParser, Optional[Path])`; `get(key, fallback)` is a convenience for single-value lookups. Both are cached after the first call; call `reload()` to re-scan. Pure stdlib — no extras required.
+- **[`esp_pylib.rom`](./esp_pylib/rom.py)** — ROM ELF path resolution for `esp-idf-monitor` and `esp-coredump`. Reads `IDF_PATH` and `ESP_ROM_ELF_DIR` from the environment, looks up chip revision entries in `roms.json` (current and legacy ESP-IDF locations), and returns `{target}_rev{chip_rev}_rom.elf` under `ESP_ROM_ELF_DIR`. Pure stdlib — no extras required.
+- **[`esp_pylib.ws`](./esp_pylib/ws.py)** — WebSocket client for IDE integration: sends structured JSON when an IDE sets the environment variable below. Requires `pip install esp-pylib[ide]` (pulls in `websockets`; effectively a no-op on Python 3.7 — see Installation note above). The connection is created lazily on first use; if no URL is set, log helpers no-op.
+- **[`esp_pylib.excepthook`](./esp_pylib/excepthook.py)** — Hooks (`sys.excepthook` and `threading.excepthook`, Python 3.8+) to report uncaught exceptions to the IDE over the same WebSocket channel, then chain to the previous hooks so normal stderr behavior is unchanged. Use together with `esp-pylib[ide]`.
+- **[`esp_pylib.serial_ports`](./esp_pylib/serial_ports.py)** — Serial port discovery, filtering, and sorting. Wraps pyserial's `comports()` with Espressif-aware priority. Exposes `get_port_list`, `get_port_names`, `detect_port`, `get_port_vid_pid`, and `parse_port_filters` (for `key=value` CLI flags like `vid=0x303A`). Requires `pip install esp-pylib[serial]`.
+- **[`esp_pylib.serial_reset`](./esp_pylib/serial_reset.py)** — DTR/RTS primitives and named reset sequences shared between `esptool` and `esp-idf-monitor`. Primitives: `set_dtr`, `set_rts`, `set_dtr_rts`. Sequences: `classic_bootloader_reset`, `unix_tight_bootloader_reset`, `usb_jtag_bootloader_reset`, `hard_reset` — each takes `flow_control=True` for adapters with always-on hardware flow control (e.g. the SiLabs CP2102C). `uses_hardware_flow_control((vid, pid))` decides that flag against the shared `HARDWARE_FLOW_CONTROL_VID_PIDS` list in `esp_pylib.constants`. Also includes a parser/executor for custom reset sequences in the `D0|R1|U1,0|W0.1` format. Requires `pip install esp-pylib[serial]`.
+- **[`esp_pylib.cli_types`](./esp_pylib/cli_types.py)** — Reusable Click `ParamType`s: `SerialPortType`, `AnyIntType`, `AutoSizeType`, `BaudRateType`, and `arg_auto_int()`. Requires `pip install esp-pylib[cli]`.
+- **[`esp_pylib.cli_options`](./esp_pylib/cli_options.py)** — Reusable Click pieces: `EspRichGroup` (root group for subcommand CLIs using `OptionEatAll`), `MutuallyExclusiveOption` (argparse-style exclusive groups), and `OptionEatAll` (consume values until the next flag or subcommand). Requires `pip install esp-pylib[cli]`.
 
 ### IDE integration (WebSocket)
 
