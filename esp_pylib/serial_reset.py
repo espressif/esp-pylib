@@ -8,7 +8,7 @@ these primitives.
 
 The chip-side circuit is active-low (DTR/RTS asserted drives the pin LOW),
 so the boolean values used here mirror pyserial's convention rather than
-the physical pin level. Use :data:`PIN_LOW` / :data:`PIN_HIGH` for
+the physical pin level. Use `PIN_LOW` / `PIN_HIGH` for
 self-documenting call sites next to the schematic.
 """
 
@@ -86,7 +86,7 @@ __all__ = [
 def _parse_bool_digit(arg: str) -> bool:
     """Parse a strict ``"0"`` / ``"1"`` digit into a bool.
 
-    Used by :func:`parse_custom_reset_sequence`. Rejects anything else
+    Used by `parse_custom_reset_sequence`. Rejects anything else
     (``"2"``, ``"-1"``, ``"true"``, …) so an obvious typo like ``D10``
     cannot silently parse as a single ``True`` write instead of two
     separate ``D1`` + ``D0`` steps.
@@ -102,7 +102,7 @@ def set_dtr(port: serial.Serial, state: bool) -> None:
     """Set the DTR pin state.
 
     ``state`` follows pyserial's convention: ``True`` asserts DTR (active),
-    ``False`` deasserts. Use :data:`PIN_LOW` / :data:`PIN_HIGH` for
+    ``False`` deasserts. Use `PIN_LOW` / `PIN_HIGH` for
     self-documenting call sites.
     """
     port.setDTR(state)
@@ -165,7 +165,7 @@ def _set_hupcl(port: serial.Serial, enabled: bool) -> bool:
 
     :returns: ``True`` if ``HUPCL`` was successfully written, ``False`` on
         Windows (no ``termios``) or on POSIX builds that omit
-        :data:`termios.HUPCL`. Callers use the return value to decide
+        `termios.HUPCL`. Callers use the return value to decide
         whether a platform fallback is needed — typically deasserting DTR
         manually before close, which is how the CP2102C hard reset path on
         Windows compensates for the missing ``HUPCL`` knob.
@@ -187,9 +187,9 @@ def parse_custom_reset_sequence(seq_str: str) -> list[dict[str, Any]]:
 
     Sequence format:
 
-    * ``D<0|1>`` — call :func:`set_dtr` with ``False``/``True``
-    * ``R<0|1>`` — call :func:`set_rts` with ``False``/``True``
-    * ``U<dtr>,<rts>`` — call :func:`set_dtr_rts` (Unix only)
+    * ``D<0|1>`` — call `set_dtr` with ``False``/``True``
+    * ``R<0|1>`` — call `set_rts` with ``False``/``True``
+    * ``U<dtr>,<rts>`` — call `set_dtr_rts` (Unix only)
     * ``W<seconds>`` — sleep for the given number of seconds (float)
 
     Steps are ``|``-separated. Whitespace around steps is ignored; empty
@@ -250,9 +250,9 @@ def parse_custom_reset_sequence(seq_str: str) -> list[dict[str, Any]]:
 def execute_custom_reset(port: serial.Serial, seq_str: str) -> None:
     """Parse ``seq_str`` and execute it against ``port``.
 
-    Convenience wrapper around :func:`parse_custom_reset_sequence` plus the
+    Convenience wrapper around `parse_custom_reset_sequence` plus the
     DTR/RTS primitives. Tools that need to integrate the steps with their
-    own retry/error handling can call :func:`parse_custom_reset_sequence`
+    own retry/error handling can call `parse_custom_reset_sequence`
     directly and dispatch the steps themselves.
     """
     for step in parse_custom_reset_sequence(seq_str):
@@ -304,14 +304,14 @@ def classic_bootloader_reset(
     Drives ``IO0`` low while pulsing ``EN``, then releases both. ``DTR`` and
     ``RTS`` are written one at a time (no atomic transition) which works on
     every platform but can briefly glitch through invalid (DTR, RTS) pairs.
-    Use :func:`unix_tight_bootloader_reset` instead when atomic transitions
+    Use `unix_tight_bootloader_reset` instead when atomic transitions
     matter (notably for ESP32-C3/S3 in USB-JTAG mode).
 
     :param enter_boot_delay: Time to hold the chip in reset before releasing
         EN. Default ``0.1`` matches esptool. esp-idf-monitor passes
         ``chip_config['enter_boot_set']``.
     :param reset_delay: Time after releasing EN before deasserting IO0.
-        Default :data:`DEFAULT_RESET_DELAY` (``0.05``) matches esptool.
+        Default `DEFAULT_RESET_DELAY` (``0.05``) matches esptool.
         esp-idf-monitor passes ``chip_config['enter_boot_unset']``.
     :param flow_control: Set ``True`` for adapters with always-on hardware
         flow control (e.g. the SiLabs CP2102C). Those adapters wire CTS to
@@ -337,18 +337,18 @@ def unix_tight_bootloader_reset(
 ) -> None:
     """Atomic-DTR/RTS bootloader reset for POSIX systems.
 
-    Uses :func:`set_dtr_rts` (``ioctl(TIOCMSET)``) so each transition writes
+    Uses `set_dtr_rts` (``ioctl(TIOCMSET)``) so each transition writes
     both modem-control bits in a single syscall, avoiding the brief invalid
-    pin pairs that the sequential :func:`classic_bootloader_reset` walks
+    pin pairs that the sequential `classic_bootloader_reset` walks
     through. This is the recommended entry path on Linux/macOS.
 
     :param flow_control: Set ``True`` for adapters with always-on hardware
         flow control (e.g. the SiLabs CP2102C). See
-        :func:`classic_bootloader_reset` for why the trailing ``IO0=HIGH``
+        `classic_bootloader_reset` for why the trailing ``IO0=HIGH``
         writes are skipped in that mode.
 
     :raises NotImplementedError: when called on Windows (no ``ioctl``).
-        Tools should fall back to :func:`classic_bootloader_reset` there.
+        Tools should fall back to `classic_bootloader_reset` there.
     """
     set_dtr_rts(port, PIN_HIGH, PIN_HIGH)
     set_dtr_rts(port, PIN_LOW, PIN_LOW)

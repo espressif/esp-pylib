@@ -268,10 +268,10 @@ class TestParsePortFilters:
 
 
 class TestGetPortVidPid:
-    """Resolve a device path to its USB ``(vid, pid)`` via :func:`comports`.
+    """Resolve a device path to its USB ``(vid, pid)`` via `comports`.
 
     Behavioural contract: the function distinguishes "lookup couldn't even
-    proceed" (raise :class:`PortVidPidNotFoundError`) from "found the port
+    proceed" (raise `PortVidPidNotFoundError`) from "found the port
     but pyserial has no USB metadata for it" (return tuple with ``None``
     fields). Callers that don't care about the difference can catch the
     exception and treat both as "unknown".

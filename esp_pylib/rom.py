@@ -46,7 +46,7 @@ def get_roms_json_paths() -> list[str]:
 def get_rom_elf_path(target: str, chip_rev: int) -> str | None:
     """Resolve the ROM ELF path for *target* and *chip_rev*.
 
-    Reads ``roms.json`` from ``IDF_PATH`` (see :func:`get_roms_json_paths`)
+    Reads ``roms.json`` from ``IDF_PATH`` (see `get_roms_json_paths`)
     and, when a matching revision entry exists, returns
     ``{ESP_ROM_ELF_DIR}/{target}_rev{chip_rev}_rom.elf``.
 

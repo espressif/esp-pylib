@@ -27,10 +27,10 @@ from esp_pylib.serial_reset import uses_hardware_flow_control
 def _make_port():
     """Build a Mock standing in for ``serial.Serial``.
 
-    Uses :class:`MagicMock` so attribute access (``port.dtr``) and method
+    Uses `MagicMock` so attribute access (``port.dtr``) and method
     calls (``port.setDTR(...)``) are recorded uniformly. We pre-seed
     ``port.dtr`` to ``False`` so the Windows usbser.sys workaround in
-    :func:`set_rts` has a deterministic value to re-apply.
+    `set_rts` has a deterministic value to re-apply.
     """
     port = MagicMock()
     port.dtr = False
@@ -125,7 +125,7 @@ class TestSetDTRandRTS:
 
 
 class TestUsesHardwareFlowControl:
-    """Membership check against :data:`HARDWARE_FLOW_CONTROL_VID_PIDS`."""
+    """Membership check against `HARDWARE_FLOW_CONTROL_VID_PIDS`."""
 
     @pytest.mark.parametrize(
         'vid_pid, expected',
@@ -279,7 +279,7 @@ def _record_sequence(port, sleep_mock):
     that append to a shared list so the order is preserved across the three
     independent mock targets.
 
-    Mocking subtlety: :func:`set_rts` always emits a trailing
+    Mocking subtlety: `set_rts` always emits a trailing
     ``port.setDTR(port.dtr)`` to flush ``SET_CONTROL_LINE_STATE`` on Windows
     usbser.sys. That re-write is plumbing, not intentional sequence content,
     and it would clutter the trace. The disambiguation is structural: the

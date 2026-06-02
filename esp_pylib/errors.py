@@ -22,10 +22,10 @@ class NoSerialPortFoundError(FatalError):
 
 
 class PortVidPidNotFoundError(LookupError):
-    """Raised by :func:`esp_pylib.serial_ports.get_port_vid_pid` when the
+    """Raised by `esp_pylib.serial_ports.get_port_vid_pid` when the
     USB VID/PID of a port cannot be looked up.
 
-    Subclasses :class:`LookupError` rather than :class:`FatalError` because
+    Subclasses `LookupError` rather than `FatalError` because
     a missing VID/PID is a *recoverable* condition — callers typically fall
     back to the standard reset path. A top-level ``except FatalError`` in a
     tool's CLI would otherwise convert "couldn't identify the adapter" into

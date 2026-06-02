@@ -33,7 +33,7 @@ HARDWARE_FLOW_CONTROL_VID_PIDS = (
 CP2102C-class bridges tie their CTS line to the chip's RTS, so the standard
 reset sequences need to skip trailing DTR writes (which would loop back as
 RTS and glitch ``EN``) and clear ``HUPCL`` before close. The reset helpers
-in :mod:`esp_pylib.serial_reset` take a ``flow_control=True`` flag for that
+in `esp_pylib.serial_reset` take a ``flow_control=True`` flag for that
 mode; this list drives the detection.
 """
 

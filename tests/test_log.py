@@ -299,7 +299,7 @@ class TestCallSiteReporting:
     even when err/warn are reached via internal helpers like die().
 
     These tests force ``is_enabled()`` to True so the call-site lookup happens; in real CLI
-    usage the lookup is skipped (see :class:`TestSkipCallSiteWhenIdeDisabled`).
+    usage the lookup is skipped (see `TestSkipCallSiteWhenIdeDisabled`).
     """
 
     def test_err_reports_direct_caller(self):
@@ -965,8 +965,8 @@ class TestStage:
         assert 'only after finish' in out.getvalue()
 
     def test_stage_buffers_warn_until_finish_on_tty(self):
-        """Counterpart of :meth:`test_stage_buffers_note_until_finish_on_tty`
-        for :meth:`warn`: the formatted ``WARNING:`` line must go to stderr
+        """Counterpart of `test_stage_buffers_note_until_finish_on_tty`
+        for `warn`: the formatted ``WARNING:`` line must go to stderr
         (not stdout) and only appear after ``stage(finish=True)``.
         """
         EspLog._reset()

@@ -12,12 +12,12 @@ __all__ = ['EspRichGroup', 'MutuallyExclusiveOption', 'OptionEatAll']
 
 
 class EspRichGroup(click.RichGroup):
-    """``rich_click`` group that wires :class:`OptionEatAll` on the root CLI.
+    """``rich_click`` group that wires `OptionEatAll` on the root CLI.
 
     Sets ``ctx._commands_list`` before parsing so eat-all options stop at
     subcommand names (``mytool --port-filter a=b flash`` does not treat
     ``flash`` as a filter value). Use ``@click.group(cls=EspRichGroup)`` on
-    any group that has subcommands and parent-level :class:`OptionEatAll`
+    any group that has subcommands and parent-level `OptionEatAll`
     options. Tools with extra ``parse_args`` logic should subclass this class
     and call ``super().parse_args(ctx, args)`` (see ``esptool``'s ``Group``).
     """
@@ -32,7 +32,7 @@ class OptionEatAll(click.Option):
 
     Imitates argparse ``nargs='*'`` for options.
 
-    Prefer ``multiple=True`` with ordinary :class:`~click.ParamType` instances so
+    Prefer ``multiple=True`` with ordinary `ParamType` instances so
     each eaten token is stored separately (``--filter a b`` → ``('a', 'b')``).
 
     Without ``multiple=True``, all eaten tokens are passed as one ``list`` to
@@ -41,7 +41,7 @@ class OptionEatAll(click.Option):
     ``--encrypt-files``). Built-in types such as ``str`` or ``click.File`` will
     mis-parse or fail.
 
-    On a group with subcommands, use :class:`EspRichGroup` (or set
+    On a group with subcommands, use `EspRichGroup` (or set
     ``ctx._commands_list`` yourself in ``parse_args``) so subcommand names are
     not swallowed as option values.
     """
@@ -102,7 +102,7 @@ class MutuallyExclusiveOption(click.Option):
     Pass ``exclusive_with=['other_opt', ...]`` using each option's Click
     ``name`` (underscore form, e.g. ``no_compress`` for ``--no-compress``).
     When both this option and any listed peer appear on the command line,
-    :class:`click.UsageError` is raised and the help text notes the conflict.
+    `click.UsageError` is raised and the help text notes the conflict.
 
     Error messages resolve each peer's real long option from the command
     (e.g. ``@click.option('--port-x', 'port_alt')`` shows ``--port-x``, not

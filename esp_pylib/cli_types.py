@@ -51,7 +51,7 @@ class AnyIntType(click.ParamType):
 
 
 class AutoSizeType(AnyIntType):
-    """Like :class:`AnyIntType` but accepts ``k`` / ``M`` suffixes and optionally ``all``.
+    """Like `AnyIntType` but accepts ``k`` / ``M`` suffixes and optionally ``all``.
 
     Suffixes use binary kilo (1024) and mega (1024²). When ``allow_all`` is
     True (default), the literal string ``all`` is returned unchanged for

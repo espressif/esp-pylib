@@ -48,7 +48,7 @@ def _get_ws_url() -> str | None:
     """Return the configured WebSocket URL, reading the env var once and caching.
 
     Uses double-checked locking so the common (already-resolved) path stays lock-free,
-    but the env-var fallback cannot race with :func:`set_ws_url` and clobber an
+    but the env-var fallback cannot race with `set_ws_url` and clobber an
     explicit URL set from another thread. Both the "found a URL" and "no URL configured"
     outcomes are cached so repeated calls from hot paths (e.g. ``is_enabled()`` in
     every warn/err) do no further env or lock work.
@@ -65,9 +65,9 @@ def _get_ws_url() -> str | None:
 def is_enabled() -> bool:
     """Return ``True`` when an IDE WebSocket URL is configured.
 
-    Cheap to call (the cached fast path of :func:`_get_ws_url` is just a non empty check),
+    Cheap to call (the cached fast path of `_get_ws_url` is just a non empty check),
     so callers can use it to skip work — such as stack walking or building rich payloads —
-    that would otherwise be discarded inside the no-op branch of :func:`send_log_message`.
+    that would otherwise be discarded inside the no-op branch of `send_log_message`.
     """
     return bool(_get_ws_url())
 
@@ -75,7 +75,7 @@ def is_enabled() -> bool:
 def _detach_connection() -> ClientConnection | None:
     """Detach and return the shared connection. Caller must hold ``_lock``.
 
-    The returned connection should be closed via :func:`_close_safely` *outside*
+    The returned connection should be closed via `_close_safely` *outside*
     the lock so a slow close handshake cannot stall other threads.
     """
     global _connection
@@ -128,7 +128,7 @@ def set_ws_url(url: str | None) -> None:
 def ensure_connected(retries: int = 3, delay: float = 1.0) -> None:
     """
     Open a WebSocket connection to the configured URL, retrying on failure.
-    Raises :class:`esp_pylib.errors.FatalError` if ``websockets`` is missing, the URL is unset, or all attempts fail.
+    Raises `esp_pylib.errors.FatalError` if ``websockets`` is missing, the URL is unset, or all attempts fail.
     """
     _ensure_connection(retries=retries, delay=delay, force_new=True, strict=True)
 
@@ -144,9 +144,9 @@ def _ensure_connection(
     Return a WebSocket client for the configured URL.
 
     If ``force_new`` is False, an existing connection is reused when present. If True, any prior connection is
-    cleared before each attempt (used by :func:`ensure_connected`).
+    cleared before each attempt (used by `ensure_connected`).
 
-    If ``strict`` is True, raises :class:`esp_pylib.errors.FatalError` when the URL is unset, ``websockets`` is
+    If ``strict`` is True, raises `esp_pylib.errors.FatalError` when the URL is unset, ``websockets`` is
     missing, or all connection attempts fail. If False, those cases return ``None``.
 
     Network I/O (``connect()`` and inter-attempt ``sleep()``) runs *outside* ``_lock`` so a slow
@@ -264,9 +264,9 @@ def send_event(event: str, **kwargs: Any) -> None:
     Send a debug event to the IDE.
     Used by esp-idf-monitor for GDB stub and coredump coordination.
 
-    Raises :class:`esp_pylib.errors.FatalError` when the URL is unset, ``websockets`` is missing,
+    Raises `esp_pylib.errors.FatalError` when the URL is unset, ``websockets`` is missing,
     the connection cannot be established, or the send itself fails. Each case carries its own
-    message (set by :func:`_ensure_connection` or wrapped here) so callers can distinguish
+    message (set by `_ensure_connection` or wrapped here) so callers can distinguish
     misconfiguration from a broken IDE link.
 
     A ``type`` entry in ``**kwargs`` cannot overwrite the reserved envelope key; the protocol
@@ -287,7 +287,7 @@ def wait_for_event(event: str, retries: int = 3) -> dict[str, Any]:
     Block until the IDE sends a message with matching event type.
     Used by esp-idf-monitor to wait for 'debug_finished' from the IDE.
 
-    Raises :class:`esp_pylib.errors.FatalError` when the URL is unset, ``websockets`` is missing,
+    Raises `esp_pylib.errors.FatalError` when the URL is unset, ``websockets`` is missing,
     the connection cannot be established, or no matching message arrives within ``retries`` reconnects.
     """
     conn = _ensure_connection(strict=True)

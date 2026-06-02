@@ -60,7 +60,7 @@ ASCII_HALF_PROGRESS_CHAR = '>'
 
 
 def _progress_bar_use_ascii(console: Console) -> bool:
-    """Whether to use ASCII bar glyphs — matches :class:`~rich.progress_bar.ProgressBar`."""
+    """Whether to use ASCII bar glyphs — matches `ProgressBar`."""
     options = console.options
     return bool(options.legacy_windows or options.ascii_only)
 
@@ -81,9 +81,9 @@ def _format_elapsed(seconds: float) -> str:
 
 class ProgressTask:
     """
-    Stateful progress tracker used by :meth:`EspLogBase.progress`.
-    Each :meth:`update` computes a uniform prefix/suffix and calls
-    :meth:`EspLogBase.progress_bar` so subclasses can override rendering.
+    Stateful progress tracker used by `EspLogBase.progress`.
+    Each `update` computes a uniform prefix/suffix and calls
+    `EspLogBase.progress_bar` so subclasses can override rendering.
     """
 
     __slots__ = ('_bar_length', '_current', '_description', '_disabled', '_logger', '_start', '_total')
@@ -124,7 +124,7 @@ class ProgressTask:
 
         Mirrors ``rich.Progress.start()`` + ``add_task()`` which draws the bar
         before any work is done. Important when ``total == 0``: without this,
-        an empty work loop would never call :meth:`update` and the bar would
+        an empty work loop would never call `update` and the bar would
         never appear.
         """
         if self._disabled:
@@ -219,7 +219,7 @@ class EspLogBase(ABC):
         sys.exit(exit_code)
 
     def stage(self, finish: bool = False) -> None:
-        """Start or finish a collapsible output stage (no-op on :class:`EspLogBase`)."""
+        """Start or finish a collapsible output stage (no-op on `EspLogBase`)."""
         pass
 
     @abstractmethod
@@ -250,20 +250,20 @@ class EspLogBase(ABC):
         disable: bool = False,
     ) -> Iterator[ProgressTask]:
         """
-        Context manager that yields a :class:`ProgressTask`.
+        Context manager that yields a `ProgressTask`.
 
-        Each :meth:`ProgressTask.update` builds a uniform prefix/suffix (including
-        elapsed time and M/N) and calls :meth:`progress_bar` so tool-specific
+        Each `ProgressTask.update` builds a uniform prefix/suffix (including
+        elapsed time and M/N) and calls `progress_bar` so tool-specific
         subclasses keep a single rendering hook.
 
         :param file: Output stream for the bar (default: stdout). Use ``sys.stderr``
             when stdout must stay clean (e.g. SPDX on stdout).
-        :param disable: If True, :meth:`ProgressTask.update` is a no-op (e.g. ``--no-progress``).
+        :param disable: If True, `ProgressTask.update` is a no-op (e.g. ``--no-progress``).
         """
         task = ProgressTask(self, total, description, bar_length, disabled=disable)
         token = _progress_output.set(file)
         try:
-            # When ``total == 0`` the body's loop won't iterate, so :meth:`update`
+            # When ``total == 0`` the body's loop won't iterate, so `update`
             # would never run and the user would see no bar at all. Render the
             # initial state here so the "0/0" state is still visible — this
             # matches the behaviour of ``rich.Progress`` which draws on
@@ -289,7 +289,7 @@ class EspLog(EspLogBase):
     it, so callers can style parts of the text (e.g.
     ``log.note('Wrote [bold]flash[/bold]')``). Callers passing dynamic/untrusted
     text that may contain ``[`` / ``]`` (paths, identifiers, regexes) must escape
-    it themselves via :func:`rich.markup.escape`.
+    it themselves via `rich.markup.escape`.
 
     Subclassing note: tools such as esptool extend ``EspLog`` with extra helpers
     while keeping ``EspLogBase`` compatibility. Inherited class attributes are
@@ -308,8 +308,8 @@ class EspLog(EspLogBase):
     _stage_active: bool = False
     _stage_newline_count: int = 0
     _stage_kept_lines: list[tuple[Any | None, str]]
-    # In-progress :meth:`progress_bar` redraws on stdout without a trailing
-    # newline; :meth:`_stage_erase_stdout` clears that line separately.
+    # In-progress `progress_bar` redraws on stdout without a trailing
+    # newline; `_stage_erase_stdout` clears that line separately.
     _stage_progress_visible: bool = False
 
     def __new__(cls, *args, **kwargs):
@@ -388,9 +388,9 @@ class EspLog(EspLogBase):
     def stage(self, finish: bool = False) -> None:
         """Start or finish a collapsible output stage.
 
-        While a stage is active, ordinary :meth:`print` output on stdout is
+        While a stage is active, ordinary `print` output on stdout is
         discarded when the stage finishes successfully (TTY + normal verbosity).
-        :meth:`note` and :meth:`warn` are buffered and re-printed after collapse.
+        `note` and `warn` are buffered and re-printed after collapse.
         In verbose mode, or on non-interactive stdout, stages are inert markers
         (output is never removed). Matches esptool's ``log.stage()`` behaviour.
         """
@@ -571,7 +571,7 @@ class EspLog(EspLogBase):
         return sys.stdout if pf is None else pf
 
     def _progress_console_for_stream(self, file: Any) -> Console:
-        """Console for rendering :class:`~rich.progress_bar.ProgressBar` on an arbitrary stream."""
+        """Console for rendering `ProgressBar` on an arbitrary stream."""
         return Console(file=file, no_color=self.no_color, highlight=False, emoji=False)
 
     @staticmethod
@@ -587,7 +587,7 @@ class EspLog(EspLogBase):
 
         Used when the active console can't render a dim background bar
         (``no_color=True`` or no ``color_system``). Rich's
-        :class:`~rich.progress_bar.ProgressBar` only emits characters for the
+        `ProgressBar` only emits characters for the
         completed portion in that case, which makes the bar grow from 0 to
         ``width`` characters and shifts the suffix between redraws. Padding
         the trailing portion with spaces keeps the suffix in the same column
@@ -612,14 +612,14 @@ class EspLog(EspLogBase):
         suffix: str = '',
         bar_length: int = 30,
     ) -> None:
-        """Print progress using Rich :class:`~rich.progress_bar.ProgressBar`.
+        """Print progress using Rich `ProgressBar`.
 
         When the active console can't render a dim background bar (``no_color``
         or no ``color_system``), the bar is rendered as a fixed-width plain
         string so the suffix stays in the same column across redraws. Glyph
         selection uses the same Rich ``ascii_only`` / ``legacy_windows`` rules
-        as :class:`~rich.progress_bar.ProgressBar` (``=``/``>`` vs ``━``/``╸``).
-        When color is available, Rich's :class:`~rich.progress_bar.ProgressBar`
+        as `ProgressBar` (``=``/``>`` vs ``━``/``╸``).
+        When color is available, Rich's `ProgressBar`
         handles encoding and legacy Windows rendering.
         """
         if self._verbosity == Verbosity.SILENT:
@@ -653,7 +653,7 @@ class EspLog(EspLogBase):
         # shade the trailing portion (so the bar stays at constant width via
         # the dim background style), otherwise our fixed-width plain renderer.
         # Glyph choice for the plain path follows Rich's ``ascii_only`` /
-        # ``legacy_windows`` flags (same as :class:`~rich.progress_bar.ProgressBar`).
+        # ``legacy_windows`` flags (same as `ProgressBar`).
         bar_renderable: Any
         if c.no_color or c.color_system is None:
             filled_char, half_char = _progress_bar_chars(c)
@@ -692,7 +692,7 @@ class EspLog(EspLogBase):
             if self._stage_active and self._stage_can_collapse() and interactive is not None and c is self.stdout:
                 self._stage_progress_visible = True
         elif end == '\n' and c is self.stdout and self._stage_active:
-            # Mirror :meth:`_stage_track_newlines`: only count rows while a
+            # Mirror `_stage_track_newlines`: only count rows while a
             # stage is active, otherwise the counter leaks across stages and
             # the next ``stage(finish=True)`` over-erases.
             self._stage_newline_count += 1
