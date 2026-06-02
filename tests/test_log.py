@@ -96,6 +96,18 @@ class TestSingleton:
         assert new_logger is not original
         assert type(new_logger) is EspLog
 
+    def test_proxy_creates_default_logger_on_first_use(self):
+        # ``from esp_pylib.logger import log; log.note(...)`` must work even
+        # when nothing has constructed ``EspLog()`` or called ``set_logger()``
+        # yet — the proxy lazily builds the default singleton on first access.
+        EspLog._reset()
+        assert EspLog.instance is None
+        out = StringIO()
+        with patch('sys.stdout', out):
+            log.note('hello')
+        assert 'NOTE: hello' in out.getvalue()
+        assert type(EspLog.instance) is EspLog
+
 
 class TestSetLogger:
     def test_set_logger_accepts_esp_log_base(self):
