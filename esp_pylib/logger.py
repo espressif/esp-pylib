@@ -25,6 +25,7 @@ from contextlib import contextmanager
 from typing import TYPE_CHECKING
 from typing import Any
 from typing import Iterator
+from typing import NoReturn
 
 from rich.console import Console
 from rich.control import Control
@@ -213,7 +214,7 @@ class EspLogBase(ABC):
         """Debug message (shown only in verbose mode)."""
         pass
 
-    def die(self, message: str, exit_code: int = 1, suggestion: str | None = None) -> None:
+    def die(self, message: str, exit_code: int = 1, suggestion: str | None = None) -> NoReturn:
         """Print error and exit."""
         self.err(message, suggestion)
         sys.exit(exit_code)
@@ -701,10 +702,18 @@ class EspLog(EspLogBase):
 
 
 class _LogProxy:
-    """Proxy that always delegates to the current EspLog singleton."""
+    """Proxy that always delegates to the current EspLog singleton.
+
+    Constructs the default `EspLog` on first access if no singleton has been
+    set yet, so ``from esp_pylib.logger import log; log.note(...)`` works
+    without an explicit ``EspLog()`` call or ``set_logger()`` first.
+    """
 
     def __getattr__(self, name):
-        return getattr(EspLog.instance, name)
+        instance = EspLog.instance
+        if instance is None:
+            instance = EspLog()
+        return getattr(instance, name)
 
 
 log: EspLogBase = _LogProxy()  # type: ignore
