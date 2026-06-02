@@ -2,14 +2,14 @@
 # SPDX-License-Identifier: Apache-2.0
 """Config file loader for Espressif tools.
 
-Each tool instantiates :class:`ToolConfig` with its own section name,
+Each tool instantiates `ToolConfig` with its own section name,
 candidate filenames, and override env var; the class handles search,
 validation, parsing, caching, and verbose user-facing logging uniformly.
 
 Search order (first match wins):
 
 1. Path from the override env var (when set; missing file or wrong section
-   raises :class:`esp_pylib.errors.ConfigError`, unless ``permissive_env_var``
+   raises `esp_pylib.errors.ConfigError`, unless ``permissive_env_var``
    is enabled — see below).
 2. Current working directory.
 3. OS-specific user config directory:
@@ -26,10 +26,10 @@ contains the tool's section — this is what allows shared filenames like
 Verbose logging
 ---------------
 Pass ``verbose=True`` to surface progress and warnings to the user. The
-loader then emits via :meth:`EspLogBase.warn` and :meth:`EspLogBase.print`
-on a logger object — by default :data:`esp_pylib.logger.log` (a proxy
+loader then emits via `EspLogBase.warn` and `EspLogBase.print`
+on a logger object — by default `esp_pylib.logger.log` (a proxy
 that dispatches to ``EspLog.instance``), but consumer tools should pass
-their own :class:`~esp_pylib.logger.EspLogBase` instance via the
+their own `EspLogBase` instance via the
 ``logger`` parameter so the wiring is *explicit* and doesn't rely on
 import-order side effects to set up the singleton.
 
@@ -46,7 +46,7 @@ Env-var fallback
 ----------------
 By default the env-var override is *strict*: if the user sets the env
 var but the target file is missing or lacks the tool's section, the
-loader raises :class:`ConfigError` rather than silently using a
+loader raises `ConfigError` rather than silently using a
 different file. Tools whose entry-points must not crash on a misconfigured
 env var can opt in to ``permissive_env_var=True``, which falls back to
 the standard search path instead.
@@ -89,8 +89,8 @@ class ToolConfig:
         timeout = config.get('timeout', fallback='10')
 
     The instance caches both the resolved path and the parsed
-    :class:`configparser.ConfigParser` after the first lookup. Call
-    :meth:`reload` to drop the cache (for example, after the tool itself
+    `configparser.ConfigParser` after the first lookup. Call
+    `reload` to drop the cache (for example, after the tool itself
     rewrites the config file).
     """
 
@@ -113,16 +113,16 @@ class ToolConfig:
             search and points at a single config file.
         :param search_dirs: Optional override of the search directories.
             Mostly useful for tests; production code should leave it
-            unset and let :meth:`_default_search_dirs` derive
+            unset and let `_default_search_dirs` derive
             cwd/user-config-dir/home.
         :param valid_options: Optional iterable of recognized option names.
-            When provided alongside ``verbose=True``, :meth:`load` emits a warning listing
+            When provided alongside ``verbose=True``, `load` emits a warning listing
             any unknown options found in the matched file. Pass ``None``
             to skip the check.
         :param permissive_env_var: When ``True``, an env-var pointing at a
             missing file or a file without the expected section silently
             falls through to the directory search instead of raising
-            :class:`ConfigError`. Use this for tools that load config at
+            `ConfigError`. Use this for tools that load config at
             module-import time and must not crash startup on a
             misconfigured env var.
         :param verbose: When ``True``, the loader emits user-facing
@@ -133,9 +133,9 @@ class ToolConfig:
             for module-level config reads where surprise output would be
             noisy or misleading.
         :param logger: Sink for verbose output. Any object exposing
-            :meth:`~esp_pylib.logger.EspLogBase.warn` and
-            :meth:`~esp_pylib.logger.EspLogBase.print` works. ``None``
-            (default) falls back to :data:`esp_pylib.logger.log` — the
+            `warn` and
+            `print` works. ``None``
+            (default) falls back to `esp_pylib.logger.log` — the
             global proxy that dispatches to whatever has been installed
             as ``EspLog.instance``. Consumer tools that own a logger
             (``esptool``, ``esp-coredump``, ...) should pass their
@@ -162,7 +162,7 @@ class ToolConfig:
         # to return after load() (an empty one when no file was found), so the
         # ``is None`` check is unambiguous. The parser cache also implicitly
         # de-duplicates verbose output: ``_emit_load_messages`` is only invoked
-        # on the cache-miss branch of :meth:`load`, so a successful first load
+        # on the cache-miss branch of `load`, so a successful first load
         # followed by repeated load() calls emits the "Loaded ..." line and
         # any unknown-option warnings exactly once per cache lifetime.
         self._cached_path: Any = _UNREAD
@@ -203,7 +203,7 @@ class ToolConfig:
     def find(self) -> Path | None:
         """Return the first matching config file path, or ``None``.
 
-        Cached after the first call; use :meth:`reload` to re-scan.
+        Cached after the first call; use `reload` to re-scan.
 
         :raises ConfigError: when ``env_var`` is set, points at a path that
             either does not exist or lacks the tool's section, and
@@ -260,7 +260,7 @@ class ToolConfig:
         """Return True iff ``path`` parses and contains the tool's section.
 
         Uses ``RawConfigParser`` (rather than the interpolating
-        :class:`ConfigParser`) so a value with stray ``%`` characters in an
+        `ConfigParser`) so a value with stray ``%`` characters in an
         unrelated section can't make a perfectly valid file look invalid.
         Parse errors and decode errors are treated as "not a match" so the
         search can move on to the next candidate; when ``verbose`` is set,
@@ -298,7 +298,7 @@ class ToolConfig:
           path of the file actually used, with a ``" (set with <ENV_VAR>)"``
           suffix when the path came from the env-var override.
 
-        Cached after the first call; use :meth:`reload` to re-parse.
+        Cached after the first call; use `reload` to re-parse.
         """
         if self._cached_parser is not None:
             return self._cached_parser, self.find()
@@ -307,7 +307,7 @@ class ToolConfig:
         # Interpolation is disabled so values can contain literal ``%`` (e.g.
         # ``progress=100%``) without raising ``InterpolationSyntaxError``. This
         # also keeps the load step consistent with the ``RawConfigParser`` used
-        # for discovery in :meth:`_file_has_section`.
+        # for discovery in `_file_has_section`.
         parser = configparser.ConfigParser(interpolation=None)
         if path is not None:
             try:
@@ -333,11 +333,11 @@ class ToolConfig:
         """Emit the user-facing messages tied to a successful load.
 
         No-op unless ``verbose`` was set at construction time. Split out
-        from :meth:`load` so subclasses (or unit tests) can observe the
+        from `load` so subclasses (or unit tests) can observe the
         exact strings without re-implementing the rest of the parsing
         pipeline.
 
-        Called exactly once per cache lifetime: :meth:`load` only invokes
+        Called exactly once per cache lifetime: `load` only invokes
         this on the cache-miss branch, so de-duplication of repeat
         ``load()`` calls is handled entirely by the parser cache.
         """
@@ -369,7 +369,7 @@ class ToolConfig:
         """Drop the cached path and parser so the next call re-scans/re-reads.
 
         Useful when the tool itself writes to its config file or when tests
-        mutate the environment between cases. The next :meth:`load` call
+        mutate the environment between cases. The next `load` call
         will re-emit verbose output (if ``verbose=True``) for the same
         reason: there's a fresh cache to populate.
         """

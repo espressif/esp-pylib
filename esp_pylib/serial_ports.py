@@ -4,7 +4,7 @@
 
 Imports from pyserial are performed at module load time;
 ``esp-pylib[serial]`` (or any other install that provides ``pyserial``) is
-required to use this module. The :class:`ImportError` raised on missing
+required to use this module. The `ImportError` raised on missing
 pyserial is intentionally explicit so that callers (and the ``[serial]``
 extra) get an actionable message instead of a confusing
 ``ModuleNotFoundError`` from inside the function bodies.
@@ -44,7 +44,7 @@ __all__ = [
 
 # CLI filter keys (e.g. ``--port-filter vid=0x303A``) are short, single-word
 # identifiers. The mapping to plural keyword argument names matches the
-# parameter names of :func:`get_port_list` so callers can do
+# parameter names of `get_port_list` so callers can do
 # ``get_port_list(**parse_port_filters(...))``.
 _FILTER_KEY_MAP: dict[str, str] = {
     'vid': 'vids',
@@ -89,7 +89,7 @@ def _sort_key(port: ListPortInfo) -> tuple[int, int, str]:
     if rank == 1:
         # Stable secondary key inside the "platform pattern" bucket: ttyUSB
         # before ttyACM on Linux, usbserial before usbmodem on macOS, matching
-        # the order in :data:`LINUX_DEVICE_PATTERNS` / :data:`MACOS_DEVICE_PATTERNS`.
+        # the order in `LINUX_DEVICE_PATTERNS` / `MACOS_DEVICE_PATTERNS`.
         patterns = LINUX_DEVICE_PATTERNS if sys.platform.startswith('linux') else MACOS_DEVICE_PATTERNS
         for i, p in enumerate(patterns):
             if p in device:
@@ -142,7 +142,7 @@ def get_port_list(
 def get_port_names(**filters: Any) -> list[str]:
     """Return matching ``port.device`` strings (sorted, filtered).
 
-    Convenience wrapper around :func:`get_port_list` for callers that only
+    Convenience wrapper around `get_port_list` for callers that only
     need device paths (e.g. shell completion).
     """
     return [str(port.device or '') for port in get_port_list(**filters)]
@@ -162,35 +162,35 @@ def detect_port(**filters: Any) -> str:
 
 
 def get_port_vid_pid(port_name: str | None) -> tuple[int | None, int | None]:
-    """Look up the USB ``(VID, PID)`` for ``port_name`` via :func:`comports`.
+    """Look up the USB ``(VID, PID)`` for ``port_name`` via `comports`.
 
-    Raises :class:`PortVidPidNotFoundError` when the lookup itself can't
+    Raises `PortVidPidNotFoundError` when the lookup itself can't
     proceed: empty / missing port name, a pyserial URL handler
     (``rfc2217://``) which by design has no USB
     identity, or a well-formed ``COM*`` / ``/dev/*`` path that is not
-    listed by :func:`comports`. Each failure mode carries its own
+    listed by `comports`. Each failure mode carries its own
     descriptive message so logs can disambiguate them without parsing.
 
     When the port **is** found, the function returns whatever
-    :func:`comports` reports for ``vid`` / ``pid`` — including ``None``
+    `comports` reports for ``vid`` / ``pid`` — including ``None``
     for either or both fields (some virtual / built-in ports show up
     without USB metadata). That keeps "found but unidentified" distinct
     from "not present": the former returns a (possibly partial) tuple,
     the latter raises. Callers that don't care about the difference can
-    catch :class:`PortVidPidNotFoundError` and treat both as "unknown".
+    catch `PortVidPidNotFoundError` and treat both as "unknown".
 
     :param port_name: Device path as reported by pyserial (e.g.
         ``/dev/cu.usbserial-1410`` or ``COM3``).
     :returns: ``(vid, pid)`` as reported by pyserial; either field may be
         ``None`` if pyserial doesn't expose USB metadata for that port.
     :raises PortVidPidNotFoundError: when the port can't be looked up at
-        all (empty name, URL handler, port not listed by :func:`comports`).
+        all (empty name, URL handler, port not listed by `comports`).
 
     The function performs two platform-specific fix-ups so the lookup
     matches the device the tool will actually open:
 
-    * ``/dev/`` symlinks are resolved with :func:`os.path.realpath`, since
-      :func:`comports` reports the real device path.
+    * ``/dev/`` symlinks are resolved with `os.path.realpath`, since
+      `comports` reports the real device path.
     * macOS ``/dev/tty.*`` paths fall through to the matching ``/dev/cu.*``
       device, because outgoing communication on macOS goes through the
       "call-up" device while users (and udev rules) often hand us the
@@ -222,10 +222,10 @@ def parse_port_filters(values: tuple[str, ...]) -> dict[str, list[Any]]:
     """Parse ``key=value`` strings produced by ``--port-filter`` flags.
 
     Supported keys: ``vid``, ``pid``, ``name``, ``serial``. ``vid`` and ``pid``
-    are parsed via :func:`int(..., 0)` so users can pass decimal, hex
+    are parsed via `int(..., 0)` so users can pass decimal, hex
     (``0x303A``), octal, or binary literals interchangeably.
 
-    The returned dict is shaped to splat directly into :func:`get_port_list`,
+    The returned dict is shaped to splat directly into `get_port_list`,
     e.g. ``get_port_list(**parse_port_filters(("vid=0x303A",)))``. All four
     keys are present (with empty lists when not specified) so callers do not
     have to defensively check for missing keys.

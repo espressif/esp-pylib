@@ -320,7 +320,7 @@ class TestDefaultSearchDirs:
         # We avoid asserting on ``Path.cwd()`` because patching ``os.name`` on
         # Python 3.13+ makes ``Path.cwd()`` instantiate the wrong subclass and
         # raise ``UnsupportedOperation``. The cwd element is exercised end-to-end
-        # in :class:`TestRealisticConfigurations`; here we focus on the
+        # in `TestRealisticConfigurations`; here we focus on the
         # platform-specific user-config dir, which is the actual variable bit.
         monkeypatch.setattr(config_mod.os, 'name', 'posix')
         monkeypatch.setattr(config_mod.Path, 'home', staticmethod(lambda: tmp_path))

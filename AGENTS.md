@@ -11,3 +11,7 @@ Follow the checklist in [Keeping the skill in sync with new features](README.md#
 5. Do not hand-edit `CHANGELOG.md` — `cz bump` handles it via the conventional commit message.
 
 Stale `[Planned]` / `[Available]` markers cause agents to skip shipped features or invent imports for unshipped ones. When in doubt, update the skill.
+
+## Docstrings
+
+Do not use Sphinx cross-reference roles (`:class:`, `:meth:`, `:func:`, `:mod:`, `:data:`, `:attr:`, `:exc:`, etc.) in docstrings or comments. This project does not generate Sphinx docs, so the roles only add noise. Use plain double-backtick code spans instead — e.g. write `` `ToolConfig` `` rather than ``:class:`ToolConfig` ``.
