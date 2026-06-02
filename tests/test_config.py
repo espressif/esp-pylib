@@ -537,6 +537,9 @@ def capture_log():
         def note(self, message):
             pass
 
+        def hint(self, message):
+            pass
+
         def debug(self, message):
             pass
 
@@ -778,6 +781,9 @@ class TestVerboseFlag:
                 pass  # noqa: E704
 
             def note(self, message):
+                pass  # noqa: E704
+
+            def hint(self, message):
                 pass  # noqa: E704
 
             def debug(self, message):

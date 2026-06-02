@@ -26,6 +26,7 @@ class CaptureLogger(EspLogBase):
         self.error_calls = []
         self.warning_calls = []
         self.note_calls = []
+        self.hint_calls = []
         self.debug_calls = []
         self.die_calls = []
         self.progress_bar_calls = []
@@ -41,6 +42,9 @@ class CaptureLogger(EspLogBase):
 
     def note(self, message: str):
         self.note_calls.append((message,))
+
+    def hint(self, message: str):
+        self.hint_calls.append((message,))
 
     def debug(self, message: str):
         self.debug_calls.append((message,))
@@ -186,8 +190,27 @@ class TestErrorWarningNote:
             logger = EspLog()
             logger.note('info here')
         text = out.getvalue()
-        assert 'Note:' in text
+        assert 'NOTE:' in text
         assert 'info here' in text
+
+    def test_hint_contains_message_on_stdout(self):
+        EspLog._reset()
+        out = StringIO()
+        with patch('sys.stdout', out):
+            logger = EspLog()
+            logger.hint('try adding esp_wifi to REQUIRES')
+        text = out.getvalue()
+        assert 'HINT:' in text
+        assert 'try adding esp_wifi to REQUIRES' in text
+
+    def test_hint_hidden_when_silent(self):
+        EspLog._reset()
+        out = StringIO()
+        with patch('sys.stdout', out):
+            logger = EspLog()
+            logger.set_verbosity(Verbosity.SILENT)
+            logger.hint('suppressed')
+        assert out.getvalue() == ''
 
 
 class TestDebug:

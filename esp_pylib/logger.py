@@ -30,7 +30,6 @@ from typing import Union
 from rich.console import Console
 from rich.control import Control
 from rich.control import ControlType
-from rich.markup import escape
 from rich.progress_bar import ProgressBar
 
 from esp_pylib.ws import is_enabled as _ws_is_enabled
@@ -206,6 +205,11 @@ class EspLogBase(ABC):
         pass
 
     @abstractmethod
+    def hint(self, message: str) -> None:
+        """Actionable hint to stdout (e.g. how to fix a failed dependency solve)."""
+        pass
+
+    @abstractmethod
     def debug(self, message: str) -> None:
         """Debug message (shown only in verbose mode)."""
         pass
@@ -276,6 +280,13 @@ class EspLogBase(ABC):
 class EspLog(EspLogBase):
     """
     Singleton logger for Espressif tools.
+
+    Rich markup: the output methods (``print``, ``debug``, ``note``, ``hint``,
+    ``warn``, ``err``) render the message as Rich markup and do **not** escape
+    it, so callers can style parts of the text (e.g.
+    ``log.note('Wrote [bold]flash[/bold]')``). Callers passing dynamic/untrusted
+    text that may contain ``[`` / ``]`` (paths, identifiers, regexes) must escape
+    it themselves via :func:`rich.markup.escape`.
 
     Subclassing note: tools such as esptool extend ``EspLog`` with extra helpers
     while keeping ``EspLogBase`` compatibility. Inherited class attributes are
@@ -367,14 +378,19 @@ class EspLog(EspLogBase):
         console.print(*args, **kwargs)
 
     def debug(self, message: str) -> None:
-        """Debug message. Only shown in verbose mode."""
+        """Debug message (dim) to STDOUT. Only shown in verbose mode."""
         if self._verbosity == Verbosity.VERBOSE:
-            self.print(f'[dim]{escape(message)}[/dim]')
+            self.print(f'[dim]{message}[/dim]')
 
     def note(self, message: str) -> None:
-        """Informational note (blue) to STDOUT with 'Note: ' prefix."""
+        """Informational note (blue) to STDOUT with 'NOTE: ' prefix."""
         if self._verbosity != Verbosity.SILENT:
-            self.print(f'[#0077BB]Note:[/#0077BB] {message}')
+            self.print(f'[#0077BB]NOTE:[/#0077BB] {message}')
+
+    def hint(self, message: str) -> None:
+        """Actionable hint (cyan) to STDOUT with 'HINT: ' prefix."""
+        if self._verbosity != Verbosity.SILENT:
+            self.print(f'[#00A0A0]HINT:[/#00A0A0] {message}')
 
     def warn(self, message: str, suggestion: Optional[str] = None) -> None:
         """Warning message (yellow) to STDERR.

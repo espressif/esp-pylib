@@ -99,6 +99,10 @@ from esp_pylib.logger import log
 log.err("Something failed"); log.warn("Watch out"); log.note("FYI")
 ```
 
+For idf.py-style build hints (`yellow_print("HINT: …")` in `idf_py_actions/tools.py`) or component-manager hints (cyan `HINT:` on stdout), use `log.hint(message)` — same `HINT:` prefix on stdout, cyan instead of yellow so hints do not collide with `log.warn` on stderr (bold yellow). Tools that suppress hints via an env flag (e.g. component manager's `NO_HINTS`) should override `hint()` on an `EspLog` subclass and call `super().hint()` when enabled.
+
+`log.print` / `err` / `warn` / `note` / `hint` / `debug` render the message as Rich markup and do **not** escape it, so callers can style parts of the text (`log.note('Wrote [bold]flash[/bold]')`). When migrating a call whose message embeds dynamic text that may contain `[` / `]` (file paths, identifiers, regexes), wrap that text with `rich.markup.escape(...)` to avoid mis-rendering or markup parse errors.
+
 Tools that wrap **raw bytes** with pre-encoded ANSI byte constants for serial-data coloring should keep those byte-level helpers local.
 
 **B) Python `logging` module:**
