@@ -70,6 +70,16 @@ with log.progress(total=len(items), description='Processing') as bar:
         bar.update(1)
 ```
 
+When the final count isn't known up front, use a live counter (no bar or percent):
+
+```python
+from esp_pylib.logger import log
+
+with log.counter(description='Collecting required components') as counter:
+    for item in discover():
+        counter.update(1)
+```
+
 Raise `FatalError` for unrecoverable conditions and handle it once at your CLI entry point:
 
 ```python
@@ -94,7 +104,7 @@ That's enough for most tools. See [Modules](#modules) below for config files, se
 
 - **[`esp_pylib.constants`](./esp_pylib/constants.py)** — Cross-tool values shared by multiple modules: Espressif USB VID/PID, default ROM baud rate, and serial port name / exclude patterns used by port discovery.
 - **[`esp_pylib.errors`](./esp_pylib/errors.py)** — A small exception hierarchy (`FatalError` and common subclasses such as `NoSerialPortFoundError`, `ConfigError`) for consistent error handling across tools.
-- **[`esp_pylib.logger`](./esp_pylib/logger.py)** — Shared logging for Espressif Python tools: verbosity levels (`Verbosity`), the default Rich-based singleton (`log` / `EspLog`), and `EspLogBase` so you can plug in a custom implementation via `EspLog.set_logger()`. Helpers: `log.err` / `log.warn` (stderr, IDE-forwarded), `log.note` / `log.hint` (stdout; cyan `HINT:` distinct from warnings for color-vision deficiency), `log.debug` (verbose only). Also provides a progress-bar API (`log.progress(...)` context manager, the `ProgressTask` it yields, and the lower-level `log.progress_bar(...)` rendering hook).
+- **[`esp_pylib.logger`](./esp_pylib/logger.py)** — Shared logging for Espressif Python tools: verbosity levels (`Verbosity`), the default Rich-based singleton (`log` / `EspLog`), and `EspLogBase` so you can plug in a custom implementation via `EspLog.set_logger()`. Helpers: `log.err` / `log.warn` (stderr, IDE-forwarded), `log.note` / `log.hint` (stdout; cyan `HINT:` distinct from warnings for color-vision deficiency), `log.debug` (verbose only). Also provides progress output: `log.progress(...)` / `ProgressTask` (bounded bar), `log.counter(...)` / `CounterTask` (live count, no bar), and the lower-level `log.progress_bar(...)` rendering hook.
 - **[`esp_pylib.config`](./esp_pylib/config.py)** — `ToolConfig` finds, parses, and caches a per-tool INI config file. Search order: env-var override → cwd → OS user-config dir (`~/.config/<tool>/` on POSIX, `~/AppData/Local/<tool>/` on Windows) → home. Files that don't contain the tool's section are silently skipped during search so candidates like `setup.cfg` / `tox.ini` are safe to list. `load()` returns `(ConfigParser, Optional[Path])`; `get(key, fallback)` is a convenience for single-value lookups. Both are cached after the first call; call `reload()` to re-scan. Pure stdlib — no extras required.
 - **[`esp_pylib.rom`](./esp_pylib/rom.py)** — ROM ELF path resolution for `esp-idf-monitor` and `esp-coredump`. Reads `IDF_PATH` and `ESP_ROM_ELF_DIR` from the environment, looks up chip revision entries in `roms.json` (current and legacy ESP-IDF locations), and returns `{target}_rev{chip_rev}_rom.elf` under `ESP_ROM_ELF_DIR`. Pure stdlib — no extras required.
 - **[`esp_pylib.ws`](./esp_pylib/ws.py)** — WebSocket client for IDE integration: sends structured JSON when an IDE sets the environment variable below. Requires `pip install esp-pylib[ide]` (pulls in `websockets`; effectively a no-op on Python 3.7 — see Installation note above). The connection is created lazily on first use; if no URL is set, log helpers no-op.
@@ -163,12 +173,26 @@ Optional keyword arguments:
 
 - `file=sys.stderr` — render the bar on stderr (e.g. when stdout must stay clean for machine-readable output like SPDX).
 - `disable=True` — turn the bar into a no-op (e.g. when a tool's `--no-progress` flag is set).
+- `unit='B'` — humanise the M/N suffix for byte totals using 1024-based `kB`/`MB`/`GB` prefixes (e.g. `1.20MB/5.00MB` instead of raw integers).
 
-If the body of the `with` block raises, the bar is **not** auto-completed to 100% — you see the last real update before the traceback.
+```python
+# Byte upload with human-readable totals
+with log.progress(total=file_size, description='Uploading', unit='B') as bar:
+    bar.update(bytes_sent)
+```
+
+For discovery with an unknown final count (no bar or percent), use `log.counter(...)`:
+
+```python
+with log.counter(description='Collecting required components') as counter:
+    counter.update(1)  # once per item found
+```
+
+If the body of the `with` block raises, neither the progress bar nor the counter is finalized — you see the last real update before the traceback (no jump to 100% and no trailing newline flush).
 
 The bar is always rendered at a fixed `bar_length` so the suffix (percent, M/N, elapsed time, …) stays in the same column on every redraw. When the active console can render colors, the unfilled portion uses a dim background bar; when colors are unavailable (`NO_COLOR`, piped output, no detected color system) the unfilled portion is rendered as plain spaces and gets replaced with `━` as progress advances.
 
-For full control over rendering, override `EspLogBase.progress_bar(cur_iter, total_iters, prefix, suffix, bar_length)` in a custom logger. `progress_bar` is **abstract**: every `EspLogBase` subclass must implement it (a no-op body is fine if the logger doesn't render bars).
+For full control over rendering, override `EspLogBase.progress_bar(cur_iter, total_iters, prefix, suffix, bar_length)` in a custom logger. `progress_bar` is **abstract**: every `EspLogBase` subclass must implement it (a no-op body is fine if the logger doesn't render bars). Live counters use `counter_line(prefix, suffix, final=False)` — optional on `EspLogBase` (default no-op); `EspLog` provides TTY-aware rendering.
 
 ### Collapsible stages
 

@@ -31,6 +31,7 @@ class CaptureLogger(EspLogBase):
         self.debug_calls = []
         self.die_calls = []
         self.progress_bar_calls = []
+        self.counter_line_calls = []
 
     def print(self, *args, **kwargs):
         self.print_calls.append((args, kwargs))
@@ -65,6 +66,9 @@ class CaptureLogger(EspLogBase):
         bar_length: int = 30,
     ) -> None:
         self.progress_bar_calls.append((cur_iter, total_iters, prefix, suffix, bar_length))
+
+    def counter_line(self, prefix: str, suffix: str, *, final: bool = False) -> None:
+        self.counter_line_calls.append((prefix, suffix, final))
 
 
 @pytest.fixture(autouse=True)
@@ -738,6 +742,100 @@ class TestProgress:
         assert currents == [3, 0, 2, 10]
         # The key invariant: never goes negative.
         assert all(c >= 0 for c in currents)
+
+    def test_progress_unit_bytes(self):
+        custom = CaptureLogger()
+        EspLog.set_logger(custom)
+        current = EspLog()
+        with current.progress(total=5_242_880, description='Uploading', unit='B') as bar:
+            bar.update(1_258_291)
+        suffix = custom.progress_bar_calls[0][3]
+        assert '1.20MB/5.00MB' in suffix
+
+    def test_progress_unit_bytes_tty(self):
+        EspLog._reset()
+        out = StringIO()
+        fake_console = Console(file=out, force_terminal=True, highlight=False, emoji=False)
+        with patch('sys.stdout', out):
+            logger = EspLog()
+            with patch.object(logger, '_get_interactive_console', return_value=fake_console):
+                with logger.progress(total=5_242_880, description='Up', unit='B') as bar:
+                    bar.update(1_258_291)
+        assert '1.20MB/5.00MB' in out.getvalue()
+
+    def test_progress_rejects_none_total(self):
+        custom = CaptureLogger()
+        EspLog.set_logger(custom)
+        current = EspLog()
+        with pytest.raises(TypeError, match='counter\\(\\) instead'):
+            with current.progress(total=None, description='X'):
+                pass
+
+    def test_counter_mode(self):
+        custom = CaptureLogger()
+        EspLog.set_logger(custom)
+        current = EspLog()
+        with current.counter(description='Collecting') as bar:
+            bar.update(1)
+            bar.update(41)
+        calls = custom.counter_line_calls
+        assert custom.progress_bar_calls == []
+        assert calls[0][0] == 'Collecting: '
+        assert calls[0][1].startswith('0 [')
+        assert calls[1][1].startswith('1 [')
+        assert calls[2][1].startswith('42 [')
+        assert calls[-1][2] is True
+
+    def test_counter_disable(self):
+        custom = CaptureLogger()
+        EspLog.set_logger(custom)
+        current = EspLog()
+        with current.counter(description='Scan', disable=True) as bar:
+            bar.update(5)
+        assert custom.counter_line_calls == []
+
+    def test_counter_tty(self):
+        EspLog._reset()
+        out = StringIO()
+        fake_console = Console(file=out, force_terminal=True, highlight=False, emoji=False)
+        with patch('sys.stdout', out):
+            logger = EspLog()
+            with patch.object(logger, '_get_interactive_console', return_value=fake_console):
+                with logger.counter(description='Items') as bar:
+                    bar.update(3)
+        text = out.getvalue()
+        assert 'Items: 3' in text
+        assert '%' not in text
+
+    def test_counter_non_tty_no_duplicate_final_line(self):
+        """Without in-place overwrite each update is its own line, so the
+        context manager's final flush must not reprint the last counter line."""
+        EspLog._reset()
+        out = StringIO()
+        with patch('sys.stdout', out):
+            logger = EspLog()
+            with patch.object(logger, '_get_interactive_console', return_value=None):
+                with logger.counter(description='Items') as bar:
+                    bar.update(3)
+        lines = [line for line in out.getvalue().splitlines() if line]
+        # One line for the initial emit and one per update; no duplicated final line.
+        assert sum(line.startswith('Items: 3 ') for line in lines) == 1
+        assert lines[-1].startswith('Items: 3 ')
+
+    def test_counter_verbose_no_duplicate_final_line(self):
+        """Verbose mode already terminates each line, so the final flush must
+        not reprint the last counter line."""
+        EspLog._reset()
+        out = StringIO()
+        fake_console = Console(file=out, force_terminal=True, highlight=False, emoji=False)
+        with patch('sys.stdout', out):
+            logger = EspLog()
+            logger.set_verbosity(Verbosity.VERBOSE)
+            with patch.object(logger, '_get_interactive_console', return_value=fake_console):
+                with logger.counter(description='Items') as bar:
+                    bar.update(3)
+        lines = [line for line in out.getvalue().splitlines() if line]
+        assert sum(line.startswith('Items: 3 ') for line in lines) == 1
 
 
 class TestProgressBarClamping:

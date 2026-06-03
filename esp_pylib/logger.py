@@ -43,6 +43,7 @@ __all__ = [
     'EspLogBase',
     'EspLog',
     'ProgressTask',
+    'CounterTask',
     'Verbosity',
 ]
 
@@ -80,6 +81,37 @@ def _format_elapsed(seconds: float) -> str:
     return f'{mins}:{secs:02d}'
 
 
+_BYTE_UNIT_SUFFIXES = ('B', 'kB', 'MB', 'GB')
+
+
+def _format_bytes(value: int) -> str:
+    """Format a byte count with 1024-based prefixes (e.g. ``1.20MB``).
+
+    Uses a 1024 divisor (binary) but keeps the familiar ``kB``/``MB``/``GB``
+    labels. Caps at the largest suffix in ``_BYTE_UNIT_SUFFIXES`` (``GB``);
+    larger values just keep growing the GB count, which is fine for the byte
+    ranges these progress bars realistically see.
+    """
+    if value < 0:
+        value = 0
+    if value < 1024:
+        return f'{value}B'
+    size = float(value)
+    for suffix in _BYTE_UNIT_SUFFIXES[1:]:
+        size /= 1024.0
+        if size < 1024.0:
+            return f'{size:.2f}{suffix}'
+    return f'{size:.2f}{_BYTE_UNIT_SUFFIXES[-1]}'
+
+
+def _format_progress_count(value: int, unit: str | None) -> str:
+    if unit is None:
+        return str(value)
+    if unit == 'B':
+        return _format_bytes(value)
+    return str(value)
+
+
 class ProgressTask:
     """
     Stateful progress tracker used by `EspLogBase.progress`.
@@ -87,7 +119,7 @@ class ProgressTask:
     `EspLogBase.progress_bar` so subclasses can override rendering.
     """
 
-    __slots__ = ('_bar_length', '_current', '_description', '_disabled', '_logger', '_start', '_total')
+    __slots__ = ('_bar_length', '_current', '_description', '_disabled', '_logger', '_start', '_total', '_unit')
 
     def __init__(
         self,
@@ -96,6 +128,7 @@ class ProgressTask:
         description: str,
         bar_length: int,
         disabled: bool,
+        unit: str | None,
     ) -> None:
         self._logger = logger
         self._total = total
@@ -103,15 +136,18 @@ class ProgressTask:
         self._description = description
         self._bar_length = bar_length
         self._disabled = disabled
+        self._unit = unit
         self._start = time.monotonic()
 
     def update(self, advance: int = 1, description: str | None = None) -> None:
         if self._disabled:
             return
-        if self._total <= 0:
-            return
+        # Record the description before the ``total <= 0`` guard so a caller can
+        # still relabel a zero-total bar (it just won't be re-emitted here).
         if description is not None:
             self._description = description
+        if self._total <= 0:
+            return
         # Clamp to [0, total]: callers may pass negative ``advance`` to rewind,
         # but the bar should never go past either bound.
         self._current = max(0, min(self._current + advance, self._total))
@@ -136,8 +172,9 @@ class ProgressTask:
         elapsed = time.monotonic() - self._start
         time_str = _format_elapsed(elapsed)
         prefix = f'{self._description} ' if self._description else ''
-        # Keep the M/N format consistent with the non-zero case ("0/0" when total == 0).
-        suffix = f' {self._current}/{self._total} [{time_str}]'
+        cur = _format_progress_count(self._current, self._unit)
+        total = _format_progress_count(self._total, self._unit)
+        suffix = f' {cur}/{total} [{time_str}]'
         self._logger.progress_bar(
             self._current,
             self._total,
@@ -152,6 +189,49 @@ class ProgressTask:
         if self._current < self._total:
             self._current = self._total
             self._emit()
+
+
+class CounterTask:
+    """
+    Stateful live counter used by `EspLogBase.counter`.
+
+    Renders ``"{description}: {current} [{elapsed}]"`` with no bar or percent.
+    """
+
+    __slots__ = ('_current', '_description', '_disabled', '_logger', '_start')
+
+    def __init__(
+        self,
+        logger: EspLogBase,
+        description: str,
+        disabled: bool,
+    ) -> None:
+        self._logger = logger
+        self._current = 0
+        self._description = description
+        self._disabled = disabled
+        self._start = time.monotonic()
+
+    def update(self, advance: int = 1, description: str | None = None) -> None:
+        if self._disabled:
+            return
+        if description is not None:
+            self._description = description
+        self._current = max(0, self._current + advance)
+        if advance != 0 or description is not None:
+            self._emit()
+
+    def _emit_initial(self) -> None:
+        if self._disabled:
+            return
+        self._emit()
+
+    def _emit(self, *, final: bool = False) -> None:
+        elapsed = time.monotonic() - self._start
+        time_str = _format_elapsed(elapsed)
+        prefix = f'{self._description}: ' if self._description else ''
+        suffix = f'{self._current} [{time_str}]'
+        self._logger.counter_line(prefix, suffix, final=final)
 
 
 class VerbosityMeta(type):
@@ -251,6 +331,15 @@ class EspLogBase(ABC):
         """Print a progress bar that overwrites itself in place."""
         pass
 
+    def counter_line(self, prefix: str, suffix: str, *, final: bool = False) -> None:
+        """Print a live counter line (no bar or percent).
+
+        Used by `counter`. The default implementation on `EspLogBase`
+        is a no-op so tools such as esptool are not required to implement it.
+        `EspLog` provides TTY-aware rendering.
+        """
+        pass
+
     @contextmanager
     def progress(
         self,
@@ -260,6 +349,7 @@ class EspLogBase(ABC):
         *,
         file: Any = None,
         disable: bool = False,
+        unit: str | None = None,
     ) -> Iterator[ProgressTask]:
         """
         Context manager that yields a `ProgressTask`.
@@ -268,11 +358,19 @@ class EspLogBase(ABC):
         elapsed time and M/N) and calls `progress_bar` so tool-specific
         subclasses keep a single rendering hook.
 
+        Pass ``unit='B'`` to render M/N byte totals with 1024-based prefixes
+        (e.g. ``1.20MB/5.00MB`` instead of raw integers).
+
         :param file: Output stream for the bar (default: stdout). Use ``sys.stderr``
             when stdout must stay clean (e.g. SPDX on stdout).
         :param disable: If True, `ProgressTask.update` is a no-op (e.g. ``--no-progress``).
+        :param unit: Quantity unit for the M/N suffix. Only ``'B'`` (bytes) is currently
+            special-cased (humanised with 1024-based ``kB``/``MB``/``GB`` prefixes); any
+            other value is ignored and the counts render as raw integers.
         """
-        task = ProgressTask(self, total, description, bar_length, disabled=disable)
+        if total is None:
+            raise TypeError('total must be an int; for an unbounded live counter use counter() instead')
+        task = ProgressTask(self, total, description, bar_length, disabled=disable, unit=unit)
         token = _progress_output.set(file)
         try:
             # When ``total == 0`` the body's loop won't iterate, so `update`
@@ -286,8 +384,38 @@ class EspLogBase(ABC):
             yield task
             # Only finalize the bar to 100% on a clean exit; otherwise an
             # exception in the body would jump the bar to "done" right before
-            # the traceback, which is misleading.
+            # the traceback, which is misleading. ``_ensure_complete`` already
+            # no-ops when the task is disabled.
             task._ensure_complete()
+        finally:
+            _progress_output.reset(token)
+
+    @contextmanager
+    def counter(
+        self,
+        description: str = '',
+        *,
+        file: Any = None,
+        disable: bool = False,
+    ) -> Iterator[CounterTask]:
+        """
+        Context manager for an unbounded live counter (no bar or percent).
+
+        Use when the final count is unknown ahead of time but live feedback is
+        still valuable, e.g. dependency discovery. The line looks like
+        ``"{description}: {current} [{elapsed}]"``.
+
+        :param file: Output stream (default: stdout). Use ``sys.stderr`` when stdout
+            must stay clean.
+        :param disable: If True, `CounterTask.update` is a no-op.
+        """
+        task = CounterTask(self, description, disabled=disable)
+        token = _progress_output.set(file)
+        try:
+            task._emit_initial()
+            yield task
+            if not disable:
+                task._emit(final=True)
         finally:
             _progress_output.reset(token)
 
@@ -592,6 +720,43 @@ class EspLog(EspLogBase):
         return Console(file=file, no_color=self.no_color, highlight=False, emoji=False)
 
     @staticmethod
+    def _erase_line(console: Console) -> None:
+        """Return to column 0 and clear the line so the next print overwrites it in place."""
+        console.print(
+            Control(ControlType.CARRIAGE_RETURN),
+            Control((ControlType.ERASE_IN_LINE, 2)),
+            end='',
+        )
+
+    def _print_overwritable_line(self, prefix: str, suffix: str, *, final: bool) -> None:
+        """Print *prefix*/*suffix* on a TTY with in-place overwrite, or one line per call."""
+        if self._verbosity == Verbosity.SILENT:
+            return
+        out = self._get_progress_print_file()
+        interactive = self._get_interactive_console()
+        # Only an interactive console at non-verbose levels overwrites the line in
+        # place; otherwise every call already ends with a newline.
+        overwrites_in_place = interactive is not None and self._verbosity != Verbosity.VERBOSE
+        # The final flush only adds the trailing newline that the in-place updates
+        # omitted. When not overwriting in place the line is already complete, so a
+        # final call would just duplicate the last line; skip it.
+        if final and not overwrites_in_place:
+            return
+        c = interactive if interactive is not None else self._progress_console_for_stream(out)
+        if overwrites_in_place:
+            end = '\n' if final else ''
+            self._erase_line(c)
+        else:
+            end = '\n'
+        c.print(prefix, suffix, sep='', end=end, markup=False, highlight=False)
+        if not end:
+            c.file.flush()
+
+    def counter_line(self, prefix: str, suffix: str, *, final: bool = False) -> None:
+        """Print a live counter line (no bar or percent)."""
+        self._print_overwritable_line(prefix, suffix, final=final)
+
+    @staticmethod
     def _render_plain_bar(
         completed: int,
         total: int,
@@ -693,11 +858,7 @@ class EspLog(EspLogBase):
         if interactive is not None:
             end = '\n' if is_complete or self._verbosity == Verbosity.VERBOSE else ''
             if self._verbosity != Verbosity.VERBOSE:
-                c.print(
-                    Control(ControlType.CARRIAGE_RETURN),
-                    Control((ControlType.ERASE_IN_LINE, 2)),
-                    end='',
-                )
+                self._erase_line(c)
         else:
             end = '\n'
 
