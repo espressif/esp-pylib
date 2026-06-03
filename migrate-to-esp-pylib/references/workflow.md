@@ -181,7 +181,7 @@ class MyToolLogger(EspLog):
 
 Each subclass automatically gets its own singleton slot — no need to redeclare `instance = None` / `_initialized = False`.
 
-The `suggestion=` kwarg on `warn` / `err` / `die` is forwarded only to the IDE WebSocket — it never appears in the terminal.
+`warn` / `err` / `note` / `hint` / `debug` accept multiple positional arguments, rendered together like `print(*args)`. `suggestion=` (on `warn` / `err` / `die`) and `exit_code=` (on `die`) are keyword-only, so any pre-existing positional calls such as `die(msg, 2)` or `err(msg, sug)` must move to `die(msg, exit_code=2)` / `err(msg, suggestion=sug)`. The `suggestion=` text is forwarded only to the IDE WebSocket — it never appears in the terminal.
 
 ### Step 6: Wire up IDE WebSocket + exception hooks
 

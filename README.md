@@ -200,21 +200,21 @@ class MyLogger(EspLogBase):
     def print(self, *args, **kwargs):
         print(*args, **kwargs)
 
-    def err(self, message, suggestion=None):
-        print(f"ERROR: {message}", file=sys.stderr)
+    def err(self, *args, suggestion=None):
+        print("ERROR:", *args, file=sys.stderr)
 
-    def warn(self, message, suggestion=None):
-        print(f"WARNING: {message}", file=sys.stderr)
+    def warn(self, *args, suggestion=None):
+        print("WARNING:", *args, file=sys.stderr)
 
-    def note(self, message):
-        print(f"NOTE: {message}")
+    def note(self, *args):
+        print("NOTE:", *args)
 
-    def hint(self, message):
-        print(f"HINT: {message}")
+    def hint(self, *args):
+        print("HINT:", *args)
 
-    def debug(self, message):
+    def debug(self, *args):
         if self._verbosity == Verbosity.VERBOSE:
-            print(message)
+            print(*args)
 
     def set_verbosity(self, mode):
         if isinstance(mode, str):
