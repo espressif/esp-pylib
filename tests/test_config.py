@@ -523,24 +523,24 @@ def capture_log():
             self.warns: list[str] = []
             self.prints: list[str] = []
 
-        def warn(self, message, suggestion=None):
-            self.warns.append(message)
+        def warn(self, *args, suggestion=None):
+            self.warns.append(args[0] if args else '')
 
         def print(self, *args, **kwargs):
             # Match ToolConfig's call shape: a single positional ``str``.
             self.prints.append(args[0] if args else '')
 
         # Stub the remaining EspLogBase abstract methods so set_logger() accepts us.
-        def err(self, message, suggestion=None):
+        def err(self, *args, suggestion=None):
             pass
 
-        def note(self, message):
+        def note(self, *args):
             pass
 
-        def hint(self, message):
+        def hint(self, *args):
             pass
 
-        def debug(self, message):
+        def debug(self, *args):
             pass
 
         def set_verbosity(self, mode):
@@ -771,22 +771,22 @@ class TestVerboseFlag:
                 self.warns: list[str] = []
                 self.prints: list[str] = []
 
-            def warn(self, message, suggestion=None):
-                self.warns.append(message)
+            def warn(self, *args, suggestion=None):
+                self.warns.append(args[0] if args else '')
 
             def print(self, *args, **kwargs):
                 self.prints.append(args[0] if args else '')
 
-            def err(self, message, suggestion=None):
+            def err(self, *args, suggestion=None):
                 pass  # noqa: E704
 
-            def note(self, message):
+            def note(self, *args):
                 pass  # noqa: E704
 
-            def hint(self, message):
+            def hint(self, *args):
                 pass  # noqa: E704
 
-            def debug(self, message):
+            def debug(self, *args):
                 pass  # noqa: E704
 
             def set_verbosity(self, mode):

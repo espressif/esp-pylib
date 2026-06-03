@@ -175,6 +175,17 @@ class Verbosity(metaclass=VerbosityMeta):
     VERBOSE = 2
 
 
+def _render_message(args: tuple[Any, ...]) -> str:
+    """Flatten variadic log args into a single string for the IDE websocket.
+
+    The console path renders each argument through Rich, but the websocket
+    transport only carries a plain ``message`` string, so join the arguments'
+    ``str()`` forms. For the common single-argument call this is just that
+    argument unchanged.
+    """
+    return ' '.join(str(a) for a in args)
+
+
 class EspLogBase(ABC):
     """
     Abstract base class defining the logging interface for Espressif tools.
@@ -190,33 +201,33 @@ class EspLogBase(ABC):
         pass
 
     @abstractmethod
-    def err(self, message: str, suggestion: str | None = None) -> None:
+    def err(self, *args: Any, suggestion: str | None = None) -> None:
         """Error message to stderr."""
         pass
 
     @abstractmethod
-    def warn(self, message: str, suggestion: str | None = None) -> None:
+    def warn(self, *args: Any, suggestion: str | None = None) -> None:
         """Warning message to stderr."""
         pass
 
     @abstractmethod
-    def note(self, message: str) -> None:
+    def note(self, *args: Any) -> None:
         """Informational note to stdout."""
         pass
 
     @abstractmethod
-    def hint(self, message: str) -> None:
+    def hint(self, *args: Any) -> None:
         """Actionable hint to stdout (e.g. how to fix a failed dependency solve)."""
         pass
 
     @abstractmethod
-    def debug(self, message: str) -> None:
+    def debug(self, *args: Any) -> None:
         """Debug message (shown only in verbose mode)."""
         pass
 
-    def die(self, message: str, exit_code: int = 1, suggestion: str | None = None) -> NoReturn:
+    def die(self, *args: Any, exit_code: int = 1, suggestion: str | None = None) -> NoReturn:
         """Print error and exit."""
-        self.err(message, suggestion)
+        self.err(*args, suggestion=suggestion)
         sys.exit(exit_code)
 
     def stage(self, finish: bool = False) -> None:
@@ -285,8 +296,13 @@ class EspLog(EspLogBase):
     """
     Singleton logger for Espressif tools.
 
+    Variadic: the message methods (``debug``, ``note``, ``hint``, ``warn``,
+    ``err``) accept ``*args`` rendered together like ``print(*args)``;
+    ``suggestion`` (``warn`` / ``err`` / ``die``) and ``exit_code`` (``die``)
+    are keyword-only.
+
     Rich markup: the output methods (``print``, ``debug``, ``note``, ``hint``,
-    ``warn``, ``err``) render the message as Rich markup and do **not** escape
+    ``warn``, ``err``) render their arguments as Rich markup and do **not** escape
     it, so callers can style parts of the text (e.g.
     ``log.note('Wrote [bold]flash[/bold]')``). Callers passing dynamic/untrusted
     text that may contain ``[`` / ``]`` (paths, identifiers, regexes) must escape
@@ -308,7 +324,7 @@ class EspLog(EspLogBase):
     _stderr: Console
     _stage_active: bool = False
     _stage_newline_count: int = 0
-    _stage_kept_lines: list[tuple[Any | None, str]]
+    _stage_kept_lines: list[tuple[Any | None, tuple[Any, ...]]]
     # In-progress `progress_bar` redraws on stdout without a trailing
     # newline; `_stage_erase_stdout` clears that line separately.
     _stage_progress_visible: bool = False
@@ -401,8 +417,8 @@ class EspLog(EspLogBase):
             self._stage_active = False
             if self._stage_can_collapse():
                 self._stage_erase_stdout()
-                for file, line in self._stage_kept_lines:
-                    self.print(line, file=file)
+                for file, parts in self._stage_kept_lines:
+                    self.print(*parts, file=file)
             self._stage_newline_count = 0
             self._stage_kept_lines.clear()
             self._stage_progress_visible = False
@@ -499,51 +515,51 @@ class EspLog(EspLogBase):
             console = Console(file=file, no_color=self.no_color, highlight=True, emoji=False)
         console.print(*args, **kwargs)
 
-    def debug(self, message: str) -> None:
+    def debug(self, *args: Any) -> None:
         """Debug message (dim) to STDOUT. Only shown in verbose mode."""
         if self._verbosity == Verbosity.VERBOSE:
-            self.print(f'[dim]{message}[/dim]')
+            self.print(*args, style='dim')
 
-    def note(self, message: str) -> None:
+    def note(self, *args: Any) -> None:
         """Informational note (blue) to STDOUT with 'NOTE: ' prefix."""
         if self._verbosity == Verbosity.SILENT:
             return
-        formatted = f'[#0077BB]NOTE:[/#0077BB] {message}'
+        parts = ('[#0077BB]NOTE:[/#0077BB]', *args)
         if self._stage_active and self._stage_can_collapse():
-            self._stage_kept_lines.append((None, formatted))
+            self._stage_kept_lines.append((None, parts))
             return
-        self.print(formatted)
+        self.print(*parts)
 
-    def hint(self, message: str) -> None:
+    def hint(self, *args: Any) -> None:
         """Actionable hint (cyan) to STDOUT with 'HINT: ' prefix."""
         if self._verbosity != Verbosity.SILENT:
-            self.print(f'[#00A0A0]HINT:[/#00A0A0] {message}')
+            self.print('[#00A0A0]HINT:[/#00A0A0]', *args)
 
-    def warn(self, message: str, suggestion: str | None = None) -> None:
+    def warn(self, *args: Any, suggestion: str | None = None) -> None:
         """Warning message (yellow) to STDERR.
 
         Suggestions are only passed to websocket clients, not to the console.
         """
         if self._verbosity != Verbosity.SILENT:
-            formatted = f'[bold yellow]WARNING:[/bold yellow] {message}'
+            parts = ('[bold yellow]WARNING:[/bold yellow]', *args)
             if self._stage_active and self._stage_can_collapse():
-                self._stage_kept_lines.append((sys.stderr, formatted))
+                self._stage_kept_lines.append((sys.stderr, parts))
             else:
-                self.print(formatted, file=sys.stderr)
+                self.print(*parts, file=sys.stderr)
         # Skip stack walking in plain CLI usage where send_log_message would no-op anyway.
         if _ws_is_enabled():
             file, line = self._get_call_site()
-            send_log_message('warning', message, suggestion, file, line)
+            send_log_message('warning', _render_message(args), suggestion, file, line)
 
-    def err(self, message: str, suggestion: str | None = None) -> None:
+    def err(self, *args: Any, suggestion: str | None = None) -> None:
         """Error message (red, bold) to STDERR.
 
         Suggestions are only passed to websocket clients, not to the console.
         """
-        self.print(f'[bold #CC3311]ERROR:[/bold #CC3311] {message}', file=sys.stderr)
+        self.print('[bold #CC3311]ERROR:[/bold #CC3311]', *args, file=sys.stderr)
         if _ws_is_enabled():
             file, line = self._get_call_site()
-            send_log_message('error', message, suggestion, file, line)
+            send_log_message('error', _render_message(args), suggestion, file, line)
 
     def _get_interactive_console(self) -> Console | None:
         """Return a Console for in-place overwrite, or None for non-interactive output."""

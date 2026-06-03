@@ -35,23 +35,23 @@ class CaptureLogger(EspLogBase):
     def print(self, *args, **kwargs):
         self.print_calls.append((args, kwargs))
 
-    def err(self, message: str, suggestion=None):
-        self.error_calls.append((message, suggestion))
+    def err(self, *args, suggestion=None):
+        self.error_calls.append((args, suggestion))
 
-    def warn(self, message: str, suggestion=None):
-        self.warning_calls.append((message, suggestion))
+    def warn(self, *args, suggestion=None):
+        self.warning_calls.append((args, suggestion))
 
-    def note(self, message: str):
-        self.note_calls.append((message,))
+    def note(self, *args):
+        self.note_calls.append(args)
 
-    def hint(self, message: str):
-        self.hint_calls.append((message,))
+    def hint(self, *args):
+        self.hint_calls.append(args)
 
-    def debug(self, message: str):
-        self.debug_calls.append((message,))
+    def debug(self, *args):
+        self.debug_calls.append(args)
 
-    def die(self, message: str, exit_code: int = 1, suggestion=None):
-        self.die_calls.append((message, exit_code, suggestion))
+    def die(self, *args, exit_code: int = 1, suggestion=None):
+        self.die_calls.append((args, exit_code, suggestion))
 
     def set_verbosity(self, mode: int | str):
         self.verbosity = mode
@@ -413,8 +413,8 @@ class TestCaptureLoggerIntegration:
         current.note('n')
         current.debug('d')
         assert custom.print_calls == [(('a', 'b'), {})]
-        assert custom.error_calls == [('e', None)]
-        assert custom.warning_calls == [('w', None)]
+        assert custom.error_calls == [(('e',), None)]
+        assert custom.warning_calls == [(('w',), None)]
         assert custom.note_calls == [('n',)]
         assert custom.debug_calls == [('d',)]
 
