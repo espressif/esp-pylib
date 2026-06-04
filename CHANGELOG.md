@@ -1,3 +1,33 @@
+## v1.0.0 (2026-06-04)
+
+### 🚨 Breaking changes
+
+- **logger**: Accept variadic args in output methods *(Frantisek Hrbata - 8af378b)*
+- EspLogBase / EspLog logging method signatures changed. *(Frantisek Hrbata - 8af378b)*
+- The note prefix is now uppercase (Note -> NOTE). *(Peter Dragun - 4f98a6f)*
+- Custom logger subclasses must implement the new `hint` method. *(Peter Dragun - 2ca600e)*
+
+### ✨ New Features
+
+- **logger**: add log.counter() for unbounded live progress *(Peter Dragun - 3af2c91)*
+- **logger**: humanise progress M/N totals with unit='B' *(Peter Dragun - 8123f39)*
+- **logger**: Add stage collapse functionality *(Peter Dragun - 8b2f22f)*
+- **logger**: Add hint method to logger interface *(Peter Dragun - 2ca600e)*
+
+### 🐛 Bug Fixes
+
+- **logger**: Prevent console reassignment from capturing output *(Peter Dragun - 0789137)*
+- Create EspLog singleton on demand in log proxy *(Peter Dragun - c2e29df)*
+- Clarify logger does not escape text *(Peter Dragun - e149996)*
+- Update note prefix to be uppercase *(Peter Dragun - 4f98a6f)*
+- Add ASCII fallback for progress bars *(Peter Dragun - ce4c095)*
+- Rename ESPRESSIF_IDE_WS to ESP_IDE_WS for consistency *(Peter Dragun - dc064e7)*
+
+### 📖 Documentation
+
+- Add quick start guide and simple examples to README *(Peter Dragun - d16ca6f)*
+
+
 ## v0.2.0 (2026-05-26)
 
 ### ✨ New Features
