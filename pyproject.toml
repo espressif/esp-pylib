@@ -98,7 +98,7 @@ ignore_missing_imports = true
 
 [tool.commitizen]
 name = "czespressif"
-version = "0.2.0"
+version = "1.0.0"
 update_changelog_on_bump = true
 tag_format = "v$version"
 changelog_start_rev = "v0.1"
