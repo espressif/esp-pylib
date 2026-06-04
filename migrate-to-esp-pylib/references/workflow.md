@@ -37,7 +37,9 @@ In `pyproject.toml` (or `setup.py`) add `esp-pylib` with the smallest extras set
 "esp-pylib[cli]>=X.Y.Z"       # + rich-click + click (Step 12 cli_types + cli_options)
 ```
 
-Extras combine: `esp-pylib[ide,serial,cli]>=X.Y.Z`. Bump the pin again whenever a `[Planned]` row flips to `[Available]` and the tool starts depending on the new module. Direct deps on `rich`, `pyserial`, `rich-click`, `click` can be removed once pulled transitively via `esp-pylib`, unless they have special version limitations.
+Extras combine: `esp-pylib[ide,serial,cli]>=X.Y.Z`. Bump the pin again whenever a `[Planned]` row flips to `[Available]` and the tool starts depending on the new module.
+
+**Direct vs transitive dependencies:** Installing `esp-pylib` (and its extras) pulls in `rich`, `pyserial`, `rich-click`, `click`, and `websockets` transitively — do **not** rely on that alone. Keep (or add) a **direct** dependency for every third-party package the tool still **imports**, even when the same package is already pulled in via an `esp-pylib` extra. Imports may not match PyPI package names (e.g. `import rich_click` → `rich-click`, `import serial` → `pyserial`). Remove a direct dep only when nothing in the repo imports it anymore (e.g. drop `websocket-client` after Step 11). Pin versions on direct deps when the tool has special compatibility requirements.
 
 ### Step 3: Replace constants
 
@@ -419,7 +421,7 @@ Mechanical mapping cheatsheet:
 
 **Parsing pitfalls (treat as Medium/High in Step 16):** option `nargs='*'` vs Click `multiple=True` (use `OptionEatAll` when the tool consumed tokens until the next flag), the `--` separator, optional positional arity, and subcommand-default behaviour differ between argparse and Click. For `OptionEatAll` on a group with subcommands, use `@click.group(cls=EspRichGroup)` (or subclass `EspRichGroup` and call `super().parse_args`) so subcommand names are not swallowed as option values. Run (or add) CLI tests for every flag combination the tool documents; call out intentional behaviour changes in the migration PR.
 
-**Dependencies:** add `esp-pylib[cli]` (pulls `rich-click` + `click`). Drop a direct `argparse` dependency only if nothing else in the repo still imports it.
+**Dependencies:** add `esp-pylib[cli]` (pulls `rich-click` + `click` transitively). Keep a direct `rich-click` dependency when the tool imports `rich_click` (often aliased as `click`); keep a direct `click` dependency for entry points that import plain `click` (e.g. ESP-IDF `idf.py` extensions).
 
 #### B) Adopt shared Click types (`esp_pylib.cli_types`)
 
