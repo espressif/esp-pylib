@@ -19,6 +19,7 @@ classifiers = [
   "Natural Language :: English",
   "Environment :: Console",
   "Topic :: Software Development :: Embedded Systems",
+  "Typing :: Typed",
   "Programming Language :: Python :: 3.7",
   "Programming Language :: Python :: 3.8",
   "Programming Language :: Python :: 3.9",
@@ -46,6 +47,12 @@ Changelog = "https://github.com/espressif/esp-pylib/blob/master/CHANGELOG.md"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["esp_pylib*"]
+
+# Ship the PEP 561 marker so downstream type checkers use esp_pylib's inline
+# annotations (e.g. `NoReturn` on `EspLogBase.die`) instead of treating the
+# package as untyped `Any`.
+[tool.setuptools.package-data]
+esp_pylib = ["py.typed"]
 
 [tool.setuptools.dynamic]
 version = { attr = "esp_pylib.__version__.__version__" }
