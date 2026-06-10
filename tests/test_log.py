@@ -1104,7 +1104,6 @@ class TestStage:
             logger = EspLog()
             logger._stdout = Console(file=out, force_terminal=True, highlight=False, emoji=False)
             logger.set_verbosity(Verbosity.NORMAL)
-            logger.no_color = True
             logger.stage()
             logger.progress_bar(4, 4, prefix='Reading: ', bar_length=10)
             assert logger._stage_newline_count == 1
@@ -1135,7 +1134,6 @@ class TestStage:
             logger = EspLog()
             logger._stdout = Console(file=out, force_terminal=True, highlight=False, emoji=False)
             logger.set_verbosity(Verbosity.NORMAL)
-            logger.no_color = True
             logger.stage()
             logger.print('status...')
             logger.progress_bar(1, 4, prefix='Reading: ', bar_length=10)
@@ -1172,7 +1170,6 @@ class TestStage:
             logger = EspLog()
             logger._stdout = Console(file=out, force_terminal=True, highlight=False, emoji=False)
             logger.set_verbosity(Verbosity.NORMAL)
-            logger.no_color = True
             logger.progress_bar(4, 4, prefix='Reading: ', bar_length=10)
             # Counter must stay at 0 because no stage was active when the bar finalized.
             assert logger._stage_newline_count == 0
@@ -1209,3 +1206,53 @@ class TestStage:
             with patch.object(logger, '_stage_erase_stdout', side_effect=lambda: self._erase_stdout_lines(logger)):
                 logger.stage(finish=True)
         assert 'stale note' not in out.getvalue()
+
+
+class TestConsoleOptions:
+    """Basic coverage for set_console_options."""
+
+    def test_options_apply_to_console(self):
+        EspLog._reset()
+        logger = EspLog()
+        logger.set_console_options(width=10000, soft_wrap=True)
+        out = StringIO()
+        logger.print('A' * 120, file=out)
+        assert out.getvalue().splitlines() == ['A' * 120]
+
+    def test_file_pins_stdout(self):
+        EspLog._reset()
+        logger = EspLog()
+        out = StringIO()
+        logger.set_console_options(file=out, force_terminal=True)
+        # force_terminal reaches stderr but is dropped on the pinned file
+        assert logger.stderr.is_terminal is True
+        assert logger.stdout.is_terminal is False
+        logger.print('deliverable')
+        assert out.getvalue() == 'deliverable\n'
+
+    def test_unsupported_option_rejected(self):
+        EspLog._reset()
+        logger = EspLog()
+        with pytest.raises(TypeError):
+            logger.set_console_options(theme='dracula')
+
+    def test_highlight_enables_auto_highlighting(self):
+        EspLog._reset()
+        logger = EspLog()
+        logger.set_console_options(highlight=True, force_terminal=True)
+        out = StringIO()
+        logger.print(123, file=out)
+        assert '\x1b[' in out.getvalue()  # the number is auto-highlighted -> ANSI
+
+    def test_quiet_mutes_all_output(self):
+        # quiet mutes at the Console layer, so even err (which verbosity SILENT
+        # keeps) is suppressed — a script can rely on the return code alone.
+        EspLog._reset()
+        logger = EspLog()
+        out, err = StringIO(), StringIO()
+        logger.set_console_options(file=out, quiet=True)
+        with patch('sys.stderr', err):
+            logger.print('data')
+            logger.err('boom')
+        assert out.getvalue() == ''
+        assert err.getvalue() == ''

@@ -38,6 +38,7 @@ from esp_pylib.ws import send_log_message
 if TYPE_CHECKING:
     from types import FrameType
 
+
 __all__ = [
     'log',
     'EspLogBase',
@@ -450,6 +451,10 @@ class EspLog(EspLogBase):
     _initialized: bool = False
     _stdout: Console
     _stderr: Console
+    # Fixed baseline that set_console_options() resets to; _options is a live copy
+    # plus that call's overrides. _make_console() reads _options.
+    _options_default: dict[str, Any]
+    _options: dict[str, Any]
     _stage_active: bool = False
     _stage_newline_count: int = 0
     _stage_kept_lines: list[tuple[Any | None, tuple[Any, ...]]]
@@ -464,20 +469,78 @@ class EspLog(EspLogBase):
 
     def __init__(self, no_color: bool | None = None):
         if not self._initialized:
-            self.no_color = no_color
-            # Setting emoji to False to avoid interpreting e.g. mac addresses as emojis (":CD:" -> 💿)
-            # Unicode characters can be used as emojis, e.g. ✅
-            self._stderr = Console(file=sys.stderr, no_color=no_color, highlight=False, emoji=False)
-            self._stdout = Console(file=sys.stdout, no_color=no_color, highlight=False, emoji=False)
+            # emoji=False avoids reading e.g. mac addresses as emojis (":CD:" -> 💿)
+            # and is the only fixed rendering option; the rest are tunable via
+            # set_console_options().
+            self._options_default: dict[str, Any] = {
+                'emoji': False,
+                'highlight': False,
+                'no_color': None,
+                'force_terminal': None,
+                'width': None,
+                'soft_wrap': False,
+                'quiet': False,
+                'file': None,
+            }
+            self._options = dict(self._options_default)
+            if no_color is not None:
+                self._options['no_color'] = no_color
+            self._stderr = self._make_console(file=sys.stderr)
+            self._stdout = self._make_console(file=sys.stdout)
             self._stage_active = False
             self._stage_newline_count = 0
             self._stage_kept_lines = []
             self._stage_progress_visible = False
             self._initialized = True
 
+    def _make_console(self, **overrides: Any) -> Console:
+        """Build a Console from the live options plus per-call *overrides*."""
+        return Console(**{**self._options, **overrides})
+
+    def set_console_options(
+        self,
+        *,
+        file: Any = None,
+        no_color: bool | None = None,
+        force_terminal: bool | None = None,
+        width: int | None = None,
+        soft_wrap: bool = False,
+        highlight: bool = False,
+        quiet: bool = False,
+    ) -> None:
+        """Set the configurable Console options; any other keyword raises TypeError.
+
+        Only these are exposed, so the rest of the Console (theme, style, markup,
+        emoji) stays fixed and all tools share one style. force_terminal applies to
+        both stdout and stderr. file= pins stdout to that target (e.g. an --output
+        file) and drops force_terminal there so it stays ANSI-free; stderr is never
+        pinned. highlight turns on Rich auto-highlighting of plain output (off by
+        default). quiet mutes every console, so a script can rely on the return code
+        alone. Each call replaces the previous one.
+        """
+        self._options = dict(self._options_default)
+        self._options.update(
+            file=file,
+            no_color=no_color,
+            force_terminal=force_terminal,
+            width=width,
+            soft_wrap=soft_wrap,
+            highlight=highlight,
+            quiet=quiet,
+        )
+        self._stderr = self._make_console(file=sys.stderr)
+        if self._options['file'] is not None:
+            # Drop force_terminal so a redirected file stays ANSI-free.
+            self._stdout = self._make_console(force_terminal=None)
+        else:
+            self._stdout = self._make_console(file=sys.stdout)
+
     @property
     def stdout(self) -> Console:
-        """Return the Console bound to the live sys.stdout."""
+        """Console for stdout: the set_console_options(file=) target if pinned, else
+        one following the live sys.stdout (redirect_stdout, capsys)."""
+        if self._options['file'] is not None:
+            return self._stdout
         return self._live_console(self._stdout, sys.stdout)
 
     @property
@@ -622,9 +685,8 @@ class EspLog(EspLogBase):
         """
         if cached.file is stream:
             return cached
-        # Mirror the cached stdout/stderr consoles (highlight=False, emoji=False)
-        # so redirected output renders identically to direct output.
-        return Console(file=stream, no_color=self.no_color, highlight=False, emoji=False)
+        # Rebuild via the factory so redirected output gets the same options.
+        return self._make_console(file=stream)
 
     def print(self, *args, **kwargs) -> None:
         """Plain output. Uses file= if provided (resolved at call time); else stdout. Suppressed when silent.
@@ -640,7 +702,7 @@ class EspLog(EspLogBase):
         elif file is sys.stderr:
             console = self.stderr
         else:
-            console = Console(file=file, no_color=self.no_color, highlight=True, emoji=False)
+            console = self._make_console(file=file)
         console.print(*args, **kwargs)
 
     def debug(self, *args: Any) -> None:
@@ -699,7 +761,7 @@ class EspLog(EspLogBase):
         if pf is not None and pf is not sys.stdout:
             try:
                 if hasattr(pf, 'isatty') and pf.isatty():
-                    return Console(file=pf, no_color=self.no_color, highlight=False, emoji=False)
+                    return self._make_console(file=pf)
             except (AttributeError, ValueError, OSError):
                 # ``isatty()`` raises ValueError on closed streams, AttributeError
                 # on non-stream objects, OSError on detached fds. Treat all as
@@ -717,7 +779,7 @@ class EspLog(EspLogBase):
 
     def _progress_console_for_stream(self, file: Any) -> Console:
         """Console for rendering `ProgressBar` on an arbitrary stream."""
-        return Console(file=file, no_color=self.no_color, highlight=False, emoji=False)
+        return self._make_console(file=file)
 
     @staticmethod
     def _erase_line(console: Console) -> None:
