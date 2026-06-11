@@ -1,3 +1,15 @@
+## v1.1.0 (2026-06-11)
+
+### ✨ New Features
+
+- **logger**: Add option to redirect informational output to stderr *(Peter Dragun - b7c1794)*
+- **logger**: expose Console configuration via set_console_options *(Frantisek Hrbata - 17c8caf)*
+
+### 🐛 Bug Fixes
+
+- Add py.typed file to package to make it type-checkable *(Peter Dragun - c89d775)*
+
+
 ## v1.0.0 (2026-06-04)
 
 ### 🚨 Breaking changes
