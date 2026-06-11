@@ -104,7 +104,7 @@ That's enough for most tools. See [Modules](#modules) below for config files, se
 
 - **[`esp_pylib.constants`](./esp_pylib/constants.py)** — Cross-tool values shared by multiple modules: Espressif USB VID/PID, default ROM baud rate, and serial port name / exclude patterns used by port discovery.
 - **[`esp_pylib.errors`](./esp_pylib/errors.py)** — A small exception hierarchy (`FatalError` and common subclasses such as `NoSerialPortFoundError`, `ConfigError`) for consistent error handling across tools.
-- **[`esp_pylib.logger`](./esp_pylib/logger.py)** — Shared logging for Espressif Python tools: verbosity levels (`Verbosity`), the default Rich-based singleton (`log` / `EspLog`), and `EspLogBase` so you can plug in a custom implementation via `EspLog.set_logger()`. Helpers: `log.err` / `log.warn` (stderr, IDE-forwarded), `log.note` / `log.hint` (stdout; cyan `HINT:` distinct from warnings for color-vision deficiency), `log.debug` (verbose only). Also provides progress output: `log.progress(...)` / `ProgressTask` (bounded bar), `log.counter(...)` / `CounterTask` (live count, no bar), and the lower-level `log.progress_bar(...)` rendering hook. Machine-output tools can call `log.set_console_options(...)` to tune a curated set of Rich `Console` options (`width`, `soft_wrap`, `force_terminal`, `no_color`, `highlight`, `quiet`, or pin stdout to a `file` such as an `--output` deliverable); other Console attributes stay fixed so output style is uniform.
+- **[`esp_pylib.logger`](./esp_pylib/logger.py)** — Shared logging for Espressif Python tools: verbosity levels (`Verbosity`), the default Rich-based singleton (`log` / `EspLog`), and `EspLogBase` so you can plug in a custom implementation via `EspLog.set_logger()`. Helpers: `log.err` / `log.warn` (stderr, IDE-forwarded), `log.note` / `log.hint` (stdout; cyan `HINT:` distinct from warnings for color-vision deficiency), `log.debug` (verbose only). `log.set_info_stream(sys.stderr)` redirects `note` / `hint` / `debug` off stdout (keeping it machine-clean) without changing those method signatures. Also provides progress output: `log.progress(...)` / `ProgressTask` (bounded bar), `log.counter(...)` / `CounterTask` (live count, no bar), and the lower-level `log.progress_bar(...)` rendering hook. Machine-output tools can call `log.set_console_options(...)` to tune a curated set of Rich `Console` options (`width`, `soft_wrap`, `force_terminal`, `no_color`, `highlight`, `quiet`, or pin stdout to a `file` such as an `--output` deliverable); other Console attributes stay fixed so output style is uniform.
 - **[`esp_pylib.config`](./esp_pylib/config.py)** — `ToolConfig` finds, parses, and caches a per-tool INI config file. Search order: env-var override → cwd → OS user-config dir (`~/.config/<tool>/` on POSIX, `~/AppData/Local/<tool>/` on Windows) → home. Files that don't contain the tool's section are silently skipped during search so candidates like `setup.cfg` / `tox.ini` are safe to list. `load()` returns `(ConfigParser, Optional[Path])`; `get(key, fallback)` is a convenience for single-value lookups. Both are cached after the first call; call `reload()` to re-scan. Pure stdlib — no extras required.
 - **[`esp_pylib.rom`](./esp_pylib/rom.py)** — ROM ELF path resolution for `esp-idf-monitor` and `esp-coredump`. Reads `IDF_PATH` and `ESP_ROM_ELF_DIR` from the environment, looks up chip revision entries in `roms.json` (current and legacy ESP-IDF locations), and returns `{target}_rev{chip_rev}_rom.elf` under `ESP_ROM_ELF_DIR`. Pure stdlib — no extras required.
 - **[`esp_pylib.ws`](./esp_pylib/ws.py)** — WebSocket client for IDE integration: sends structured JSON when an IDE sets the environment variable below. Requires `pip install esp-pylib[ide]` (pulls in `websockets`; effectively a no-op on Python 3.7 — see Installation note above). The connection is created lazily on first use; if no URL is set, log helpers no-op.
@@ -206,6 +206,22 @@ log.print('Connecting...')
 # ...
 log.stage(finish=True)
 ```
+
+### Redirecting informational output
+
+`err` / `warn` always go to stderr; `note` / `hint` / `debug` go to stdout by default. When stdout must stay reserved for machine-readable output (e.g. a tool that emits structured data such as JSON on stdout), call `log.set_info_stream(sys.stderr)` once at startup to route the informational helpers to stderr instead. Pass `None` to restore the default.
+
+```python
+import sys
+
+from esp_pylib.logger import log
+
+log.set_info_stream(sys.stderr)  # note/hint/debug -> stderr; stdout stays clean
+```
+
+This is a logger-level setting, so the `note` / `hint` / `debug` method signatures stay frozen. `EspLogBase` provides a no-op default so `log.set_info_stream(...)` is safe even when a custom logger is installed via `EspLog.set_logger()`; override `set_info_stream` on custom loggers that need to honour the redirect.
+
+The stream is captured at call time and is not updated if `sys.stderr` is later reassigned (e.g. `contextlib.redirect_stderr`) — unlike `err` / `warn`, which resolve the live stderr on every call. Call `set_info_stream` once at startup, before any redirection.
 
 ### Custom logger
 
