@@ -149,17 +149,119 @@ class TestSorting:
                 '/dev/cu.unknown',
             ]
 
-    def test_windows_only_espressif_priority(self):
+    @pytest.mark.parametrize(
+        'platform, fake_ports, expected',
+        [
+            pytest.param(
+                'linux',
+                [
+                    FakePort('/dev/ttyUSB0'),
+                    FakePort('/dev/ttyUSB2'),
+                    FakePort('/dev/ttyUSB1'),
+                ],
+                ['/dev/ttyUSB0', '/dev/ttyUSB2', '/dev/ttyUSB1'],
+                id='linux_ttyusb_bucket',
+            ),
+            pytest.param(
+                'linux',
+                [
+                    FakePort('/dev/ttyUSB0', vid=ESPRESSIF_VID),
+                    FakePort('/dev/ttyUSB2', vid=ESPRESSIF_VID),
+                    FakePort('/dev/ttyUSB1', vid=ESPRESSIF_VID),
+                    FakePort('/dev/ttyACM0', vid=0x1234),
+                ],
+                [
+                    '/dev/ttyUSB0',
+                    '/dev/ttyUSB2',
+                    '/dev/ttyUSB1',
+                    '/dev/ttyACM0',
+                ],
+                id='linux_espressif_then_other_buckets',
+            ),
+            pytest.param(
+                'linux',
+                [
+                    FakePort('/dev/ttyACM0'),
+                    FakePort('/dev/ttyACM2'),
+                    FakePort('/dev/ttyACM1'),
+                ],
+                ['/dev/ttyACM0', '/dev/ttyACM2', '/dev/ttyACM1'],
+                id='linux_ttyacm_bucket',
+            ),
+            pytest.param(
+                'win32',
+                [FakePort('COM3'), FakePort('COM11'), FakePort('COM7')],
+                ['COM3', 'COM11', 'COM7'],
+                id='windows_com_ports',
+            ),
+            pytest.param(
+                'win32',
+                [
+                    FakePort('COM3', vid=0x1234),
+                    FakePort('COM5', vid=ESPRESSIF_VID),
+                    FakePort('COM4', vid=0xABCD),
+                ],
+                ['COM5', 'COM3', 'COM4'],
+                id='windows_espressif_first',
+            ),
+        ],
+    )
+    def test_preserves_comports_order_within_bucket(self, platform, fake_ports, expected):
+        with _patch_comports(fake_ports), _patch_platform(platform):
+            assert [p.device for p in get_port_list()] == expected
+
+    def test_priority_does_not_cross_buckets(self):
+        # ttyACM9 must stay below ttyUSB0 even though comports() listed it second.
         fake = [
-            FakePort('COM3', vid=0x1234),
-            FakePort('COM5', vid=ESPRESSIF_VID),
-            FakePort('COM4', vid=0xABCD),
+            FakePort('/dev/ttyUSB0'),
+            FakePort('/dev/ttyACM9'),
         ]
-        with _patch_comports(fake), _patch_platform('win32'):
-            result = [p.device for p in get_port_list()]
-        # Espressif first; the rest preserved in deterministic device-name order
-        assert result[0] == 'COM5'
-        assert set(result[1:]) == {'COM3', 'COM4'}
+        with _patch_comports(fake), _patch_platform('linux'):
+            assert [p.device for p in get_port_list()] == ['/dev/ttyUSB0', '/dev/ttyACM9']
+
+    def test_reverses_comports_order_within_macos_pattern_buckets(self):
+        # pyserial on macOS lists oldest-first; we reverse before priority sort.
+        fake = [
+            FakePort('/dev/cu.usbserial-1410'),
+            FakePort('/dev/cu.usbserial-1412'),
+            FakePort('/dev/cu.usbmodem001'),
+            FakePort('/dev/cu.usbmodem003'),
+        ]
+        with _patch_comports(fake), _patch_platform('darwin'):
+            assert [p.device for p in get_port_list()] == [
+                '/dev/cu.usbserial-1412',
+                '/dev/cu.usbserial-1410',
+                '/dev/cu.usbmodem003',
+                '/dev/cu.usbmodem001',
+            ]
+
+    def test_priority_beats_high_device_index(self):
+        fake = [
+            FakePort('/dev/ttyUSB99', vid=0x1234),
+            FakePort('/dev/ttyUSB0', vid=ESPRESSIF_VID),
+        ]
+        with _patch_comports(fake), _patch_platform('linux'):
+            assert [p.device for p in get_port_list()] == [
+                '/dev/ttyUSB0',
+                '/dev/ttyUSB99',
+            ]
+
+    def test_preserves_comports_order_across_multiple_linux_buckets(self):
+        fake = [
+            FakePort('/dev/ttyACM0'),
+            FakePort('/dev/ttyACM2'),
+            FakePort('/dev/ttyUSB0'),
+            FakePort('/dev/ttyUSB3'),
+            FakePort('/dev/random'),
+        ]
+        with _patch_comports(fake), _patch_platform('linux'):
+            assert [p.device for p in get_port_list()] == [
+                '/dev/ttyUSB0',
+                '/dev/ttyUSB3',
+                '/dev/ttyACM0',
+                '/dev/ttyACM2',
+                '/dev/random',
+            ]
 
 
 class TestExcludeList:
@@ -205,6 +307,32 @@ class TestDetectPort:
         ]
         with _patch_comports(fake), _patch_platform('linux'):
             assert detect_port() == '/dev/ttyACM0'
+
+    def test_returns_first_comports_order_when_priorities_equal(self):
+        fake = [
+            FakePort('/dev/ttyUSB1'),
+            FakePort('/dev/ttyUSB2'),
+            FakePort('/dev/ttyUSB0'),
+        ]
+        with _patch_comports(fake), _patch_platform('linux'):
+            assert detect_port() == '/dev/ttyUSB1'
+
+    def test_picks_first_comports_within_highest_priority_bucket(self):
+        fake = [
+            FakePort('/dev/ttyUSB2', vid=ESPRESSIF_VID),
+            FakePort('/dev/ttyUSB0', vid=ESPRESSIF_VID),
+            FakePort('/dev/ttyUSB1', vid=ESPRESSIF_VID),
+        ]
+        with _patch_comports(fake), _patch_platform('linux'):
+            assert detect_port() == '/dev/ttyUSB2'
+
+    def test_picks_last_comports_on_macos_within_bucket(self):
+        fake = [
+            FakePort('/dev/cu.usbserial-1410', vid=ESPRESSIF_VID),
+            FakePort('/dev/cu.usbserial-1412', vid=ESPRESSIF_VID),
+        ]
+        with _patch_comports(fake), _patch_platform('darwin'):
+            assert detect_port() == '/dev/cu.usbserial-1412'
 
     def test_raises_when_no_ports(self):
         with _patch_comports([]), pytest.raises(NoSerialPortFoundError):
