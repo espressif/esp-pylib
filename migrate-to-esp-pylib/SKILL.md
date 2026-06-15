@@ -1,7 +1,7 @@
 ---
 name: migrate-to-esp-pylib
 repository: https://github.com/espressif/esp-pylib
-description: Migrates Espressif Python tools to the shared esp-pylib library. Use when the user explicitly asks to migrate to esp-pylib, replace duplicated code (FatalError, logging, console output options via set_console_options, set_info_stream, progress bars, collapsible log stages, byte progress or unbounded counters, IDE WebSocket, INI config, ROM ELF resolution, serial port discovery, DTR/RTS reset primitives, named reset sequences, Click ParamTypes and Click option classes), convert argparse CLIs to rich-click, or remove dependencies superseded by an esp_pylib.* module.
+description: Migrates Espressif Python tools to the shared esp-pylib library. Use when the user explicitly asks to migrate to esp-pylib, replace duplicated code (FatalError, logging, console output options via set_console_options, set_info_stream, progress bars, collapsible log stages, byte progress or unbounded counters, IDE WebSocket, INI config, ROM ELF resolution, serial port discovery, DTR/RTS reset primitives, named reset sequences, Click ParamTypes and Click option classes), convert argparse CLIs to rich-click, remove dependencies superseded by an esp_pylib.* module, or troubleshoot common migration pitfalls (terminal width in tests, leftover argparse imports after rich-click, breaking vs cosmetic API changes).
 ---
 
 # Migrate a Tool to esp-pylib
@@ -77,11 +77,11 @@ Task Progress:
 | 15 | [Tests and verify](references/workflow.md#step-15-run-tests-and-verify) |
 | 16 | [Migration report](references/workflow.md#step-16-write-a-migration-report-for-the-reviewer) |
 
-Also in [workflow.md](references/workflow.md): [what stays local](references/workflow.md#what-stays-local), [backward-compatibility patterns](references/workflow.md#backward-compatibility-patterns).
+Also in [workflow.md](references/workflow.md): [what stays local](references/workflow.md#what-stays-local), [common pitfalls](references/workflow.md#common-pitfalls), [backward-compatibility patterns](references/workflow.md#backward-compatibility-patterns).
 
 ## Critical rules
 
-1. **No breaking changes** — preserve existing public APIs; wrap return shapes where types differ.
+1. **No breaking changes to public APIs** — preserve Python callables consumers import, CLI flag names/defaults/semantics, return types, exception types external code catches, and exit codes. Unified log *wording* and styling for cross-tool consistency (e.g. `Notice` → `NOTE:`, bold `WARNING:`) are **not** breaking — see [Common pitfalls](references/workflow.md#common-pitfalls) and [Backward-compatibility patterns](references/workflow.md#backward-compatibility-patterns).
 2. **Tool-specific code stays local** — chip/protocol definitions, reset *strategy* selection and `--before`/`--after` plumbing, byte-level serial ANSI coloring, and tool-specific env vars/timings stay in the consumer; see [what stays local](references/workflow.md#what-stays-local).
 3. **`esp-pylib` never imports consumer tools** — the dependency graph flows one way.
 4. **Skip [Planned] steps** — never invent imports for unshipped modules.

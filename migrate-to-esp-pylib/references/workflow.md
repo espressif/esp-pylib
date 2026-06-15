@@ -425,6 +425,8 @@ Mechanical mapping cheatsheet:
 
 **Parsing pitfalls (treat as Medium/High in Step 16):** option `nargs='*'` vs Click `multiple=True` (use `OptionEatAll` when the tool consumed tokens until the next flag), the `--` separator, optional positional arity, and subcommand-default behaviour differ between argparse and Click. For `OptionEatAll` on a group with subcommands, use `@click.group(cls=EspRichGroup)` (or subclass `EspRichGroup` and call `super().parse_args`) so subcommand names are not swallowed as option values. Run (or add) CLI tests for every flag combination the tool documents; call out intentional behaviour changes in the migration PR.
 
+**Remove `argparse` imports:** after converting to rich-click, drop `import argparse` from migrated modules. A common leftover is rebuilding `argparse.Namespace` in Click callbacks to call legacy `main(args)` — pass explicit parameters or `ctx.obj` instead (see [Common pitfalls](#leftover-argparse-imports-after-rich-click)).
+
 **Dependencies:** add `esp-pylib[cli]` (pulls `rich-click` + `click` transitively). Keep a direct `rich-click` dependency when the tool imports `rich_click` (often aliased as `click`); keep a direct `click` dependency for entry points that import plain `click` (e.g. ESP-IDF `idf.py` extensions).
 
 #### B) Adopt shared Click types (`esp_pylib.cli_types`)
@@ -553,7 +555,7 @@ Inside library code prefer `raise FatalError(...)` (or a tool-specific subclass)
 ### Step 15: Run tests and verify
 
 1. Run `pre-commit run` (ruff, ruff-format, mypy, codespell). Run this **before** the test suite — `ruff-format` will rewrite files, and you want tests to exercise the final form.
-2. Run the tool's full test suite.
+2. Run the tool's full test suite. If log-output or progress-bar assertions fail only in CI or narrow terminals, pin a wide terminal width in `conftest.py` (see [Common pitfalls § Terminal width in tests](#terminal-width-in-tests)).
 3. Verify no import errors; `--help` works for the root command and every subcommand.
 4. If the tool had no CLI tests before Step 12, add minimal tests for representative flag combinations (especially subcommands and `nargs`/`multiple` options) before merging the argparse removal.
 5. Verify no raw ANSI codes remain in diagnostic output.
@@ -569,6 +571,54 @@ Produce a short report (PR description, or a sibling note linked from it) that c
 - **High / needs human verification on real hardware or in-context review** — anything touching reset orchestration, runtime behaviour, or error/exit semantics: per-chip timing tables wired into shared reset sequences (Step 10), `flow_control` derivation from live VID/PID (Step 10), Windows fallback when `unix_tight_bootloader_reset` raises (Step 10), `install_exception_reporting()` placement relative to pre-existing `sys.excepthook` / `threading.excepthook` hooks (Step 6), `sys.exit` → `log.die` / `raise FatalError` conversions that change who decides to terminate (Step 13), any custom-reset-string handling that previously raised tool-specific errors (Step 10), argparse→rich-click changes that alter subcommand defaults, positional arity, or `nargs`/`multiple` behaviour (Step 12 A — exercise every documented CLI combination), first adoption of `OptionEatAll` on a group with subcommands (confirm `EspRichGroup` / `super().parse_args` and that documented flag combinations still parse).
 
 For each Medium / High entry, name the file(s) touched and call out what the reviewer should verify by hand — e.g. "test reset on an ESP32-S3 behind a CP210x adapter (flow_control path)" or "confirm `sentry_excepthook` still runs after `install_exception_reporting()`". Skipped `[Planned]` steps and intentionally-kept-local code (see [§ What stays local](#what-stays-local)) should also be noted so the reviewer doesn't flag them as misses.
+
+## Common pitfalls
+
+### Terminal width in tests
+
+After Step 5, Rich-based helpers (`log.note`, progress bars, tables) honour the detected terminal width. In pytest (especially CI or IDE test runners), `stdout`/`stderr` are often pipes with a narrow or zero width, so long lines wrap and substring assertions on a single line fail intermittently.
+
+Set a stable width once for the whole test session — the easiest fix is `conftest.py`:
+
+```python
+import os
+
+os.environ.setdefault('COLUMNS', '120')
+```
+
+Pick a value comfortably wider than the longest expected log line. For a single test module, `monkeypatch.setenv('COLUMNS', '120')` works too. Alternatively, call `log.set_console_options(width=120, soft_wrap=False)` in a session-scoped autouse fixture when the suite already configures the logger at startup.
+
+### Leftover `argparse` imports after rich-click
+
+After Step 12 A, remove `import argparse`. A common half-migration rebuilds `argparse.Namespace` in Click callbacks to feed old `main(args)` code:
+
+```python
+# Avoid
+main(argparse.Namespace(port=ctx.obj['port'], baud=ctx.obj['baud'], offset=offset, size=size))
+
+# Prefer
+flash(port=ctx.obj['port'], baud=ctx.obj['baud'], offset=offset, size=size)
+```
+
+Only keep a `Namespace` shim when an external API must stay byte-for-byte compatible (document it as Medium risk in Step 16).
+
+### What counts as a breaking change
+
+Migrations must not break consumers that import the tool as a library, shell scripts that pass documented flags, or tests that assert on stable contracts. **Public API** means symbols other packages, IDE extensions, or documented integrations import or call — typically names in `__all__`, re-exported from the package root, or called out in user-facing docs. Private helpers starting with underscore (`_helper`, argparse-only glue) may be renamed or inlined without a compat shim.
+
+Use this split when reviewing a PR:
+
+| Change | Breaking? | Notes |
+|--------|-----------|-------|
+| Log prefix / styling unified across tools (`Notice` → `NOTE:`, `WARNING:` on stderr, cyan `HINT:`) | No | Acceptable for consistent Espressif CLI output; update golden files / snapshots |
+| Progress bar or stage rendering on a TTY vs pipe | No | Behaviour already depends on terminal capabilities; pin `COLUMNS` in tests |
+| Renamed / removed Python function, class, or module export | Yes, **only if it was public API** | Private symbols: rename freely; public symbols: wrap or keep a deprecated alias |
+| Changed function signature, return type, or raised exception type | Yes, **only if it was public API** | Private helpers: update call sites; public callables: adapters required |
+| Renamed CLI flag, changed default, or different positional arity | Yes | Treat as High in Step 16 unless documented as intentional |
+| Different exit code for the same failure mode | Yes | Map to the old code or call out explicitly |
+| `sys.exit` → `log.die` / `raise FatalError` that changes who catches the error | Yes | Medium/High — verify callers |
+
+When in doubt, preserve the old public surface and note cosmetic log diffs in the migration report.
 
 ## Backward-compatibility patterns
 
