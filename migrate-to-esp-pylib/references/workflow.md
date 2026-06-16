@@ -288,7 +288,7 @@ ports = get_port_list(vids=[0x303A])
 device = detect_port(vids=[0x303A])
 ```
 
-Filters: within a list, values are OR'ed; distinct lists are AND'ed. `names` / `serials` are case-insensitive substring; `vids` / `pids` are exact int matches. Sorting prioritises Espressif VID, then platform-known device patterns from `LINUX_DEVICE_PATTERNS` / `MACOS_DEVICE_PATTERNS`. `MACOS_PORT_EXCLUDE_LIST` is applied automatically on macOS regardless of caller filters; other platforms are unaffected.
+Filters: within a list, values are OR'ed; distinct lists are AND'ed. `names` / `serials` are case-insensitive substring; `vids` / `pids` are exact int matches. Sorting prioritises Espressif VID, then platform-known device patterns from `LINUX_DEVICE_PATTERNS` / `MACOS_DEVICE_PATTERNS`. Within each priority bucket, relative order follows pyserial's `comports()` enumeration so the most recently attached port tends to rank first (`detect_port` returns `ports[0]`): preserved as-is on Linux/Windows, reversed on macOS (pyserial there often lists the newest port last). This within-bucket ordering is best-effort — it depends on pyserial and OS enumeration (e.g. Linux `glob` order is not guaranteed) and may vary between runs. `MACOS_PORT_EXCLUDE_LIST` is applied automatically on macOS regardless of caller filters; other platforms are unaffected.
 
 `parse_port_filters(...)` returns a dict with all four keys (empty lists for unspecified) so it splats directly into `get_port_list(**parse_port_filters(...))`. `vid` / `pid` use `int(value, 0)` (decimal, `0x...`, `0o...`, `0b...` all accepted).
 

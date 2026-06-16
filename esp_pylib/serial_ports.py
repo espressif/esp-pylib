@@ -67,35 +67,28 @@ def _is_excluded(port: ListPortInfo) -> bool:
     return False
 
 
-def _sort_key(port: ListPortInfo) -> tuple[int, int, str]:
-    """Sort key: Espressif VID first, then platform-known patterns, then device.
+def _sort_key(port: ListPortInfo) -> tuple[int, int]:
+    """Sort key: Espressif VID first, then platform-known patterns.
 
-    Lower tuples sort first. ``rank`` is negated (e.g. ``-2`` for Espressif)
-    so that the *highest* priority bucket appears at the top of the sorted
-    list while still using a plain ascending ``sorted()`` call. The trailing
-    ``device`` string makes the ordering deterministic for tests and for users
-    who repeatedly run a tool with a stable hardware setup.
+    `get_port_list` stable-sorts by this key so ports with equal priority keep
+    their relative order from the pre-sort pass (pyserial's `comports()` order
+    on Linux/Windows; reversed on macOS — see `get_port_list`). Lower tuples
+    sort first; ``rank`` is negated so the highest-priority bucket ends up at
+    the top of an ascending sort.
     """
     device = str(port.device or '')
     if port.vid == ESPRESSIF_VID:
-        rank = 2
-    elif sys.platform.startswith('linux') and any(p in device for p in LINUX_DEVICE_PATTERNS):
-        rank = 1
-    elif sys.platform == 'darwin' and any(p in device for p in MACOS_DEVICE_PATTERNS):
-        rank = 1
+        return (-2, 0)
+    if sys.platform.startswith('linux'):
+        patterns = LINUX_DEVICE_PATTERNS
+    elif sys.platform == 'darwin':
+        patterns = MACOS_DEVICE_PATTERNS
     else:
-        rank = 0
-    pattern_index = 0
-    if rank == 1:
-        # Stable secondary key inside the "platform pattern" bucket: ttyUSB
-        # before ttyACM on Linux, usbserial before usbmodem on macOS, matching
-        # the order in `LINUX_DEVICE_PATTERNS` / `MACOS_DEVICE_PATTERNS`.
-        patterns = LINUX_DEVICE_PATTERNS if sys.platform.startswith('linux') else MACOS_DEVICE_PATTERNS
-        for i, p in enumerate(patterns):
-            if p in device:
-                pattern_index = i
-                break
-    return (-rank, pattern_index, device)
+        return (0, 0)
+    for i, p in enumerate(patterns):
+        if p in device:
+            return (-1, i)
+    return (0, 0)
 
 
 def get_port_list(
@@ -117,7 +110,15 @@ def get_port_list(
     :param pids: Filter by USB Product IDs (exact match).
     :param names: Filter by device name substrings (case-insensitive).
     :param serials: Filter by serial number substrings (case-insensitive).
-    :return: Sorted list of matching ports (best candidates first).
+    :return: Sorted list of matching ports: Espressif-VID first, then
+        platform-known patterns, then others. Within each priority bucket,
+        relative order follows pyserial's `comports()` enumeration so the
+        most recently attached port tends to rank first (``detect_port``
+        returns ``ports[0]``). On Linux and Windows that order is preserved
+        as-is; on macOS the list is reversed first because pyserial often
+        lists the newest port last there. This within-bucket ordering is
+        best-effort — it depends on pyserial and OS enumeration (e.g. Linux
+        ``glob`` order is not guaranteed) and may vary between runs.
     """
     matched: list[ListPortInfo] = []
     for port in _comports():
@@ -136,7 +137,14 @@ def get_port_list(
             if not any(s.lower() in sn for s in serials):
                 continue
         matched.append(port)
-    return sorted(matched, key=_sort_key)
+    # Stable sort by priority bucket. Within each bucket, keep pyserial's
+    # comports() relative order on Linux/Windows so the newest port tends to
+    # rank first there. On macOS pyserial (IOKit) often lists newest last, so
+    # reverse first. Ordering is best-effort — not guaranteed across runs.
+    if sys.platform == 'darwin':
+        matched.reverse()
+    matched.sort(key=_sort_key)
+    return matched
 
 
 def get_port_names(**filters: Any) -> list[str]:
