@@ -453,7 +453,7 @@ class TestGetPortVidPid:
         # devices — short-circuit with a dedicated message instead of paying
         # for a comports() walk and risking a substring false-positive.
         with _patch_comports([FakePort('/dev/ttyUSB0', vid=0x1, pid=0x2)]) as comports:
-            with pytest.raises(PortVidPidNotFoundError, match='only COM\\* and /dev/\\* ports'):
+            with pytest.raises(PortVidPidNotFoundError, match='only COM\\* and absolute device paths'):
                 get_port_vid_pid(port_name)
         comports.assert_not_called()
 
@@ -479,9 +479,29 @@ class TestGetPortVidPid:
         # device. We must follow the symlink before matching.
         fake = [FakePort('/dev/ttyUSB0', vid=0xABCD, pid=0x0001)]
         with _patch_comports(fake):
-            with patch.object(ports_mod.os.path, 'islink', return_value=True):
-                with patch.object(ports_mod.os.path, 'realpath', return_value='/dev/ttyUSB0'):
-                    assert get_port_vid_pid('/dev/esp0') == (0xABCD, 0x0001)
+            with patch.object(ports_mod.os.path, 'realpath', return_value='/dev/ttyUSB0'):
+                assert get_port_vid_pid('/dev/esp0') == (0xABCD, 0x0001)
+
+    def test_keeps_dev_symlink_path_when_realpath_leaves_dev(self):
+        # Some CI/container setups expose ``/dev/ttyUSB0`` as a symlink into
+        # a host-mounted device directory. pyserial still reports the ``/dev``
+        # path, so keep the original path as a candidate.
+        fake = [FakePort('/dev/ttyUSB0', vid=0xABCD, pid=0x0001)]
+        with _patch_comports(fake):
+            with patch.object(ports_mod.os.path, 'realpath', return_value='/host_dev/ttyUSB0'):
+                assert get_port_vid_pid('/dev/ttyUSB0') == (0xABCD, 0x0001)
+
+    def test_matches_absolute_path_by_realpath(self):
+        # If the caller receives a host-mounted symlink directly, resolve it to
+        # the ``/dev`` entry reported by pyserial.
+        fake = [FakePort('/dev/ttyUSB0', vid=0xABCD, pid=0x0001)]
+        realpaths = {
+            '/dev/ttyUSB0': '/dev/ttyUSB0',
+            '/host_dev/ttyUSB0': '/dev/ttyUSB0',
+        }
+        with _patch_comports(fake):
+            with patch.object(ports_mod.os.path, 'realpath', side_effect=lambda path: realpaths[path]):
+                assert get_port_vid_pid('/host_dev/ttyUSB0') == (0xABCD, 0x0001)
 
     def test_macos_tty_falls_through_to_cu_device(self):
         # macOS exposes the same physical port twice: ``/dev/tty.X`` and
