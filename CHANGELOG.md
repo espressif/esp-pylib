@@ -1,3 +1,11 @@
+## v1.1.1 (2026-06-18)
+
+### 🐛 Bug Fixes
+
+- **serial_ports**: resolve symlinked port paths *(Jaroslav Burian - f2ba499)*
+- **serial_ports**: preserve comports order within priority buckets *(Peter Dragun - 375c877)*
+
+
 ## v1.1.0 (2026-06-11)
 
 ### ✨ New Features
