@@ -396,14 +396,7 @@ class TestParsePortFilters:
 
 
 class TestGetPortVidPid:
-    """Resolve a device path to its USB ``(vid, pid)`` via `comports`.
-
-    Behavioural contract: the function distinguishes "lookup couldn't even
-    proceed" (raise `PortVidPidNotFoundError`) from "found the port
-    but pyserial has no USB metadata for it" (return tuple with ``None``
-    fields). Callers that don't care about the difference can catch the
-    exception and treat both as "unknown".
-    """
+    """Resolve a device path to its USB ``(vid, pid)`` via `comports`."""
 
     @pytest.mark.parametrize(
         'lookup, comports_entry, expected',
@@ -479,29 +472,58 @@ class TestGetPortVidPid:
         # device. We must follow the symlink before matching.
         fake = [FakePort('/dev/ttyUSB0', vid=0xABCD, pid=0x0001)]
         with _patch_comports(fake):
-            with patch.object(ports_mod.os.path, 'realpath', return_value='/dev/ttyUSB0'):
-                assert get_port_vid_pid('/dev/esp0') == (0xABCD, 0x0001)
+            with patch.object(ports_mod.os.path, 'islink', return_value=True):
+                with patch.object(ports_mod.os.path, 'realpath', return_value='/dev/ttyUSB0'):
+                    with patch.object(ports_mod.os.path, 'exists', return_value=True):
+                        assert get_port_vid_pid('/dev/esp0') == (0xABCD, 0x0001)
 
-    def test_keeps_dev_symlink_path_when_realpath_leaves_dev(self):
-        # Some CI/container setups expose ``/dev/ttyUSB0`` as a symlink into
-        # a host-mounted device directory. pyserial still reports the ``/dev``
-        # path, so keep the original path as a candidate.
+    def test_raises_when_symlink_target_is_missing(self):
+        # A udev alias can outlive the backing tty node. That is a lookup
+        # failure when neither the alias nor its missing target appears in
+        # comports().
+        with _patch_comports([]) as comports:
+            with patch.object(ports_mod.os.path, 'islink', return_value=True):
+                with patch.object(ports_mod.os.path, 'realpath', return_value='/dev/ttyUSB0'):
+                    with patch.object(ports_mod.os.path, 'exists', return_value=False):
+                        with pytest.raises(PortVidPidNotFoundError, match='not listed by pyserial'):
+                            get_port_vid_pid('/dev/esp0')
+        comports.assert_called_once()
+
+    def test_does_not_realpath_non_symlink_device_paths(self):
+        # Callers may pass the real ``/dev/tty*`` path directly; only symlinks
+        # are resolved before matching against comports().
         fake = [FakePort('/dev/ttyUSB0', vid=0xABCD, pid=0x0001)]
         with _patch_comports(fake):
-            with patch.object(ports_mod.os.path, 'realpath', return_value='/host_dev/ttyUSB0'):
+            with patch.object(ports_mod.os.path, 'islink', return_value=False) as islink:
                 assert get_port_vid_pid('/dev/ttyUSB0') == (0xABCD, 0x0001)
+        islink.assert_called_once_with('/dev/ttyUSB0')
 
-    def test_matches_absolute_path_by_realpath(self):
-        # If the caller receives a host-mounted symlink directly, resolve it to
-        # the ``/dev`` entry reported by pyserial.
-        fake = [FakePort('/dev/ttyUSB0', vid=0xABCD, pid=0x0001)]
+    def test_resolves_nested_dev_symlink_before_lookup(self):
+        # Nested udev aliases (e.g. ``/dev/serial_ports/...``) are symlinks
+        # that comports() does not list; realpath must reach the backing tty.
+        fake = [FakePort('/dev/ttyACM0', vid=0x303A, pid=0x1001)]
+        with _patch_comports(fake):
+            with patch.object(ports_mod.os.path, 'islink', return_value=True):
+                with patch.object(ports_mod.os.path, 'realpath', return_value='/dev/ttyACM0'):
+                    with patch.object(ports_mod.os.path, 'exists', return_value=True):
+                        assert get_port_vid_pid('/dev/serial_ports/ttyACM-esp32') == (0x303A, 0x1001)
+
+    def test_symlink_in_comports_does_not_shadow_real_device(self):
+        # pyserial may list a flat udev alias with vid/pid unset. Resolving the
+        # symlink before the comports() walk must reach the backing device entry.
+        fake = [
+            FakePort('/dev/ttyUSB-lalala', vid=None, pid=None),
+            FakePort('/dev/ttyUSB0', vid=0xABCD, pid=0x0001),
+        ]
         realpaths = {
+            '/dev/ttyUSB-lalala': '/dev/ttyUSB0',
             '/dev/ttyUSB0': '/dev/ttyUSB0',
-            '/host_dev/ttyUSB0': '/dev/ttyUSB0',
         }
         with _patch_comports(fake):
-            with patch.object(ports_mod.os.path, 'realpath', side_effect=lambda path: realpaths[path]):
-                assert get_port_vid_pid('/host_dev/ttyUSB0') == (0xABCD, 0x0001)
+            with patch.object(ports_mod.os.path, 'islink', return_value=True):
+                with patch.object(ports_mod.os.path, 'realpath', side_effect=lambda path: realpaths[path]):
+                    with patch.object(ports_mod.os.path, 'exists', return_value=True):
+                        assert get_port_vid_pid('/dev/ttyUSB-lalala') == (0xABCD, 0x0001)
 
     def test_macos_tty_falls_through_to_cu_device(self):
         # macOS exposes the same physical port twice: ``/dev/tty.X`` and
@@ -522,15 +544,11 @@ class TestGetPortVidPid:
             with pytest.raises(PortVidPidNotFoundError, match='not listed by pyserial'):
                 get_port_vid_pid('/dev/ttyUSB0')
 
-    def test_returns_none_fields_when_pyserial_lacks_ids(self):
+    def test_returns_none_tuple_when_pyserial_lacks_ids(self):
         # Some virtual ports show up in comports() with vid/pid unset (the
-        # built-in Bluetooth ports on macOS, for instance). The port IS
-        # present — this is a *different* failure mode from "not listed" —
-        # so we return what pyserial gave us instead of raising. Callers
-        # that lump both cases together can ``except PortVidPidNotFoundError``
-        # and inspect ``None`` separately; callers that don't care still get
-        # a tuple they can pass to ``uses_hardware_flow_control`` (which
-        # returns False for any ``None`` component).
+        # built-in Bluetooth ports on macOS, for instance). Preserve the
+        # legacy "listed, but identity unavailable" result instead of
+        # treating the port as missing.
         fake = [FakePort('/dev/ttyUSB0', vid=None, pid=None)]
         with _patch_comports(fake):
             assert get_port_vid_pid('/dev/ttyUSB0') == (None, None)
