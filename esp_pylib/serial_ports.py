@@ -179,27 +179,29 @@ def get_port_vid_pid(port_name: str | None) -> tuple[int | None, int | None]:
     listed by `comports`. Each failure mode carries its own
     descriptive message so logs can disambiguate them without parsing.
 
-    When the port **is** found, the function returns whatever
-    `comports` reports for ``vid`` / ``pid`` — including ``None``
-    for either or both fields (some virtual / built-in ports show up
-    without USB metadata). That keeps "found but unidentified" distinct
-    from "not present": the former returns a (possibly partial) tuple,
-    the latter raises. Callers that don't care about the difference can
-    catch `PortVidPidNotFoundError` and treat both as "unknown".
+    When the port **is** found, the function returns its ``vid`` / ``pid``
+    if both fields are available. Candidate paths with missing USB metadata
+    are skipped so another path for the same device can still provide the full
+    identity; if no candidate has IDs, the legacy ``(None, None)`` result is
+    returned for the listed port.
 
     :param port_name: Device path as reported by pyserial (e.g.
         ``/dev/cu.usbserial-1410``, ``/host_dev/ttyUSB0``, or ``COM3``).
-    :returns: ``(vid, pid)`` as reported by pyserial; either field may be
-        ``None`` if pyserial doesn't expose USB metadata for that port.
+    :returns: ``(vid, pid)`` as reported by pyserial.
     :raises PortVidPidNotFoundError: when the port can't be looked up at
-        all (empty name, URL handler, port not listed by `comports`).
+        all (empty name, URL handler, symlink with a missing target,
+        port not listed by `comports`).
 
     The function performs two platform-specific fix-ups so the lookup
     matches the device the tool will actually open:
 
-    * POSIX paths are matched by both path string and `os.path.realpath`,
-      covering environments where the requested path and `comports` path
-      point at the same device through different symlinks.
+    * If the requested path is a symlink (`os.path.islink`), the resolved
+      path and the original path are both matched against comports. The
+      resolved path is tried first so regular udev aliases prefer the
+      backing device metadata, while the original path still covers Docker
+      setups where ``/dev/ttyUSB0`` points at a bind-mounted
+      ``/host_dev/ttyUSB0``. A stale udev alias whose target node is gone
+      is treated like any other path not listed by comports.
     * macOS ``/dev/tty.*`` paths fall through to the matching ``/dev/cu.*``
       device, because outgoing communication on macOS goes through the
       "call-up" device while users (and udev rules) often hand us the
@@ -212,16 +214,26 @@ def get_port_vid_pid(port_name: str | None) -> tuple[int | None, int | None]:
             f'Cannot resolve VID/PID for {port_name!r}: only COM* and absolute device paths are supported '
             '(pyserial URL handlers have no USB identity).'
         )
-    candidates = [port_name]
-    if os.path.isabs(port_name):
-        candidates.append(os.path.realpath(port_name))
+    lookup_ports = [port_name]
+    if os.path.islink(port_name):
+        resolved = os.path.realpath(port_name)
+        if os.path.exists(resolved) and resolved != port_name:
+            lookup_ports.insert(0, resolved)
+
     if sys.platform == 'darwin':
-        for candidate in candidates[:]:
-            if 'tty' in candidate:
-                candidates.append(candidate.replace('tty', 'cu'))
-    for port in _comports():
-        if port.device in candidates:
-            return port.vid, port.pid
+        lookup_ports += [p.replace('tty', 'cu') for p in lookup_ports if 'tty' in p]
+
+    ports = list(_comports())
+    found_without_ids = False
+    for lookup_port in lookup_ports:
+        for port in ports:
+            if port.device != lookup_port:
+                continue
+            if port.vid is not None and port.pid is not None:
+                return port.vid, port.pid
+            found_without_ids = True
+    if found_without_ids:
+        return None, None
     raise PortVidPidNotFoundError(
         f'Cannot resolve VID/PID for {port_name!r}: not listed by pyserial. '
         'The device may be unplugged or hidden from this process.'

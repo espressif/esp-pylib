@@ -292,7 +292,7 @@ Filters: within a list, values are OR'ed; distinct lists are AND'ed. `names` / `
 
 `parse_port_filters(...)` returns a dict with all four keys (empty lists for unspecified) so it splats directly into `get_port_list(**parse_port_filters(...))`. `vid` / `pid` use `int(value, 0)` (decimal, `0x...`, `0o...`, `0b...` all accepted).
 
-`get_port_vid_pid(port_name)` resolves a device path to its USB `(VID, PID)` — primarily for deciding `flow_control` in Step 10. Catch `PortVidPidNotFoundError` locally and fall back to the standard reset path; do not route it through a top-level `except FatalError` handler.
+`get_port_vid_pid(port_name)` resolves a device path to its USB `(VID, PID)` — primarily for deciding `flow_control` in Step 10. On POSIX, udev aliases under `/dev/` (e.g. `/dev/esp0` → `ttyUSB0`, including nested paths like `/dev/serial_ports/...`) are followed via `os.path.realpath` before matching against `comports()`; a stale alias whose target node is gone raises `PortVidPidNotFoundError` (disconnected device). Catch `PortVidPidNotFoundError` locally and fall back to the standard reset path; do not route it through a top-level `except FatalError` handler.
 
 For tools whose existing public API returns plain device-path strings (not `ListPortInfo`), wrap `get_port_list(...)` — see [§ Backward-compatibility patterns](#backward-compatibility-patterns).
 
