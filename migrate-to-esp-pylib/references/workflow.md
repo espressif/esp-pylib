@@ -555,7 +555,7 @@ Inside library code prefer `raise FatalError(...)` (or a tool-specific subclass)
 ### Step 15: Run tests and verify
 
 1. Run `pre-commit run` (ruff, ruff-format, mypy, codespell). Run this **before** the test suite — `ruff-format` will rewrite files, and you want tests to exercise the final form.
-2. Run the tool's full test suite. If log-output or progress-bar assertions fail only in CI or narrow terminals, pin a wide terminal width in `conftest.py` (see [Common pitfalls § Terminal width in tests](#terminal-width-in-tests)).
+2. Run the tool's full test suite. If log-output or progress-bar assertions fail only in CI or narrow terminals, pin a wide terminal width in `conftest.py` (see [Common pitfalls § Terminal width in tests](#terminal-width-in-tests)). When fixing log-output assertions, do not depend on `ERROR:` / `WARNING:` / `NOTE:` / `HINT:` prefixes — see [§ Logger prefixes in tests](#logger-prefixes-in-tests).
 3. Verify no import errors; `--help` works for the root command and every subcommand.
 4. If the tool had no CLI tests before Step 12, add minimal tests for representative flag combinations (especially subcommands and `nargs`/`multiple` options) before merging the argparse removal.
 5. Verify no raw ANSI codes remain in diagnostic output.
@@ -588,6 +588,22 @@ os.environ.setdefault('COLUMNS', '120')
 
 Pick a value comfortably wider than the longest expected log line. For a single test module, `monkeypatch.setenv('COLUMNS', '120')` works too. Alternatively, call `log.set_console_options(width=120, soft_wrap=False)` in a session-scoped autouse fixture when the suite already configures the logger at startup.
 
+### Logger prefixes in tests
+
+After Step 5, `log.err`, `log.warn`, `log.note`, `log.hint`, and related helpers prepend labels such as `ERROR:`, `WARNING:`, `NOTE:`, and `HINT:`. The exact prefix text, stream choice, and styling are owned by `esp_pylib.logger` and are **not** part of a consumer tool's public API — do not assert on them in the tool's test suite:
+
+```python
+# Avoid — prefix/format may change with esp-pylib updates
+assert "HINT: some text" in captured.stdout
+assert captured.stderr.startswith("WARNING:")
+
+# Prefer — assert on the message body the tool controls
+assert "some text" in captured.stdout
+# Or mock/stub EspLog and assert log.hint was called with the expected message
+```
+
+When fixing tests broken by a prefix change during migration, drop the prefix from the assertion rather than locking in pylib's formatting. Golden files and snapshot tests should likewise match on user-visible message content, not logger decoration.
+
 ### Leftover `argparse` imports after rich-click
 
 After Step 12 A, remove `import argparse`. A common half-migration rebuilds `argparse.Namespace` in Click callbacks to feed old `main(args)` code:
@@ -610,7 +626,7 @@ Use this split when reviewing a PR:
 
 | Change | Breaking? | Notes |
 |--------|-----------|-------|
-| Log prefix / styling unified across tools (`Notice` → `NOTE:`, `WARNING:` on stderr, cyan `HINT:`) | No | Acceptable for consistent Espressif CLI output; update golden files / snapshots |
+| Log prefix / styling unified across tools (`Notice` → `NOTE:`, `WARNING:` on stderr, cyan `HINT:`) | No | Acceptable for consistent Espressif CLI output; update golden files / snapshots — but do not assert on prefixes in tool tests (see [§ Logger prefixes in tests](#logger-prefixes-in-tests)) |
 | Progress bar or stage rendering on a TTY vs pipe | No | Behaviour already depends on terminal capabilities; pin `COLUMNS` in tests |
 | Renamed / removed Python function, class, or module export | Yes, **only if it was public API** | Private symbols: rename freely; public symbols: wrap or keep a deprecated alias |
 | Changed function signature, return type, or raised exception type | Yes, **only if it was public API** | Private helpers: update call sites; public callables: adapters required |
