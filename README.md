@@ -285,6 +285,8 @@ These show up often when moving a tool to `esp-pylib`; see [Common pitfalls](./m
 
 **Terminal width in tests.** Rich-based logging and progress bars wrap to the detected terminal width. Pytest and CI often use narrow or piped streams, so log substring assertions fail intermittently. Set a stable width in `conftest.py` (e.g. `os.environ.setdefault('COLUMNS', '120')`) or via `log.set_console_options(width=120)` in a session fixture.
 
+**Logger prefixes in tests.** `ERROR:`, `WARNING:`, `NOTE:`, and `HINT:` labels are owned by `esp_pylib.logger` and are not part of a consumer tool's public API. Do not assert on prefixed output (e.g. `assert "HINT: some text" in output`); match on the message body the tool controls, or mock/stub `EspLog` and assert the helper was called with the expected text.
+
 **Leftover `argparse` imports.** After rich-click conversion, remove `import argparse`. Rebuilding `argparse.Namespace` in Click callbacks to call `main(args)` is a common leftover — use explicit parameters or `ctx.obj` instead.
 
 **Breaking vs cosmetic changes.** Unified log wording and styling (`Notice` → `NOTE:`, shared `WARNING:` / `HINT:` prefixes) are intentional and not breaking. Breaking changes apply to **public** Python API surface (symbols other tools import), CLI flag names/defaults/semantics, return/exception types, and exit codes — private helpers may be refactored freely; preserve or wrap public symbols.
