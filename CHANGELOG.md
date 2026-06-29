@@ -1,3 +1,10 @@
+## v1.1.2 (2026-06-29)
+
+### 🐛 Bug Fixes
+
+- **serial_ports**: handle Docker symlink VID/PID lookup *(Jaroslav Burian - 92abc6b)*
+
+
 ## v1.1.1 (2026-06-18)
 
 ### 🐛 Bug Fixes
