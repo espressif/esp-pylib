@@ -141,14 +141,15 @@ class SerialPortType(click.ParamType):
 
             "Description: <text>, VID: 0xVVVV, PID: 0xPPPP"
 
-        Missing fields (``None`` / empty string) are silently dropped, so a
+        Missing fields (``None`` / empty string, or the literal ``n/a``
+        pyserial reports for ports without metadata) are silently dropped, so a
         USB device that doesn't advertise a description still shows just its
         VID/PID, and a non-USB serial port (no VID/PID metadata) shows just
         its description — or returns an empty string if nothing is known.
         """
         parts: list[str] = []
         description = getattr(port, 'description', None)
-        if description:
+        if description and description.strip().lower() != 'n/a':
             parts.append(f'Description: {description}')
         vid = getattr(port, 'vid', None)
         if vid is not None:
