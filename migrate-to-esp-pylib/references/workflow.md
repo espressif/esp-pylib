@@ -254,7 +254,7 @@ from esp_pylib.rom import get_rom_elf_path
 elf = get_rom_elf_path(target, chip_rev)  # str | None
 ```
 
-``get_rom_elf_path`` returns ``None`` when ``IDF_PATH`` or ``ESP_ROM_ELF_DIR`` are unset, when no ``roms.json`` is found under ``IDF_PATH``, or when *chip_rev* has no matching entry. The ELF filename pattern is ``{target}_rev{chip_rev}_rom.elf`` under ``ESP_ROM_ELF_DIR``.
+``get_rom_elf_path`` returns ``None`` when ``IDF_PATH`` or ``ESP_ROM_ELF_DIR`` are unset, when no ``roms.json`` is found under ``IDF_PATH``, or when no entry has ``rev <= chip_rev``. *chip_rev* and ``roms.json`` ``rev`` values use ``major * 100 + minor`` (same as ``efuse_hal_chip_revision()``); for example ``0`` is v0.0, ``101`` is v1.1, ``300`` is v3.0. It prefers an exact revision match and otherwise selects the next lower revision listed in ``roms.json`` (see [esp-rom-elfs](https://github.com/espressif/esp-rom-elfs#choosing-the-rom-elf-file)). The ELF filename pattern is ``{target}_rev{selected_rev}_rom.elf`` under ``ESP_ROM_ELF_DIR``.
 
 ``roms.json`` candidates are tried in order (unreadable files, invalid JSON, JSON
 that omits *target*, or lists *target* with an empty revision array are skipped):
