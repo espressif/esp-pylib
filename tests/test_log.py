@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import io
+import os
 import re
 import sys
 from io import StringIO
@@ -1303,6 +1304,21 @@ class TestConsoleOptions:
         assert logger.stdout.is_terminal is False
         logger.print('deliverable')
         assert out.getvalue() == 'deliverable\n'
+
+    def test_pinned_file_stays_ansi_free_with_force_color(self):
+        # Rich decides on its own whether a Console target understands escape
+        # sequences, and it consults FORCE_COLOR/TTY_COMPATIBLE before it ever
+        # asks the file whether it is a tty. CI commonly exports FORCE_COLOR,
+        # so the pinned file must say "not a terminal" explicitly, otherwise
+        # a deliverable like a JSON report comes out wrapped in escapes.
+        EspLog._reset()
+        logger = EspLog()
+        out = StringIO()
+        with patch.dict(os.environ, {'FORCE_COLOR': '1'}):
+            logger.set_console_options(file=out, force_terminal=True, highlight=True)
+            assert logger.stdout.is_terminal is False
+            logger.print(123)
+        assert out.getvalue() == '123\n'
 
     def test_unsupported_option_rejected(self):
         EspLog._reset()
