@@ -526,10 +526,11 @@ class EspLog(EspLogBase):
         Only these are exposed, so the rest of the Console (theme, style, markup,
         emoji) stays fixed and all tools share one style. force_terminal applies to
         both stdout and stderr. file= pins stdout to that target (e.g. an --output
-        file) and drops force_terminal there so it stays ANSI-free; stderr is never
-        pinned. highlight turns on Rich auto-highlighting of plain output (off by
-        default). quiet mutes every console, so a script can rely on the return code
-        alone. Each call replaces the previous one.
+        file) and turns force_terminal off there, so it stays ANSI-free even with
+        FORCE_COLOR set in the environment; stderr is never pinned. highlight turns
+        on Rich auto-highlighting of plain output (off by default). quiet mutes every
+        console, so a script can rely on the return code alone. Each call replaces
+        the previous one.
         """
         self._options = dict(self._options_default)
         self._options.update(
@@ -543,8 +544,12 @@ class EspLog(EspLogBase):
         )
         self._stderr = self._make_console(file=sys.stderr)
         if self._options['file'] is not None:
-            # Drop force_terminal so a redirected file stays ANSI-free.
-            self._stdout = self._make_console(force_terminal=None)
+            # Turn force_terminal off, so a redirected file stays ANSI-free.
+            # It has to be False and not None, because None means "detect it
+            # yourself" to Rich, which then answers "terminal" whenever
+            # FORCE_COLOR or TTY_COMPATIBLE=1 is set in the environment,
+            # without ever asking the file whether it is a tty.
+            self._stdout = self._make_console(force_terminal=False)
         else:
             self._stdout = self._make_console(file=sys.stdout)
 

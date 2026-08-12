@@ -143,7 +143,7 @@ print(info_msg)                     # → log.print(info_msg)
 
 Use `log.err` only for real error diagnostics — it adds `ERROR:` and forwards to the IDE WebSocket. Reserve plain `print()` only for primary data output that is not a diagnostic (e.g. final report bytes piped to stdout, GDB backtrace text for another process).
 
-Tools whose stdout is machine output (JSON, a report, bytes for another process) can call `log.set_console_options(...)` once at startup to set the Rich `Console`: `width` / `soft_wrap` to stop wrapping, `force_terminal` to keep colour when spawned by `idf.py`, `no_color`, `highlight` for Rich auto-highlighting, `quiet` to mute all output (rely on the return code), or `file=` to pin stdout to an `--output` deliverable (the pinned console drops `force_terminal` so the file stays ANSI-free; stderr is never pinned). Only those options are configurable — any other keyword raises `TypeError`, so the shared output style can't drift.
+Tools whose stdout is machine output (JSON, a report, bytes for another process) can call `log.set_console_options(...)` once at startup to set the Rich `Console`: `width` / `soft_wrap` to stop wrapping, `force_terminal` to keep colour when spawned by `idf.py`, `no_color`, `highlight` for Rich auto-highlighting, `quiet` to mute all output (rely on the return code), or `file=` to pin stdout to an `--output` deliverable (the pinned console turns `force_terminal` off, so the file stays ANSI-free even when the environment sets `FORCE_COLOR`, as e.g. the esp-idf CI does; stderr is never pinned). Only those options are configurable — any other keyword raises `TypeError`, so the shared output style can't drift.
 
 **E) Progress bars:**
 
