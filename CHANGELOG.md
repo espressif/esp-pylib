@@ -1,3 +1,11 @@
+## v1.1.3 (2026-08-12)
+
+### 🐛 Bug Fixes
+
+- **logger**: keep the console pinned to a file free of ANSI escapes *(Frantisek Hrbata - fc7d92c)*
+- **cli**: skip placeholder 'n/a' port description in completion *(Jaroslav Burian - 66d8909)*
+
+
 ## v1.1.2 (2026-06-29)
 
 ### 🐛 Bug Fixes
