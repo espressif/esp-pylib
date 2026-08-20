@@ -1,3 +1,10 @@
+## v1.1.4 (2026-08-20)
+
+### 🐛 Bug Fixes
+
+- **rom**: fall back to next lower ROM ELF revision *(erhankur - 6ec06d7)*
+
+
 ## v1.1.3 (2026-08-12)
 
 ### 🐛 Bug Fixes
