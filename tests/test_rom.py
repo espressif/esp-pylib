@@ -61,10 +61,18 @@ class TestGetRomElfPath:
         monkeypatch.setenv('ESP_ROM_ELF_DIR', str(tmp_path / 'elfs'))
         assert get_rom_elf_path('esp32', 0) is None
 
-    def test_returns_none_when_revision_not_listed(self, monkeypatch, tmp_path: Path):
+    def test_falls_back_to_next_lower_revision(self, monkeypatch, tmp_path: Path):
         idf = tmp_path / 'idf'
         elf_dir = tmp_path / 'elfs'
-        _write_roms_json(idf, {'esp32': [{'rev': 0}]})
+        _write_roms_json(idf, {'esp32p4': [{'rev': 0}, {'rev': 300}]})
+        monkeypatch.setenv('IDF_PATH', str(idf))
+        monkeypatch.setenv('ESP_ROM_ELF_DIR', str(elf_dir))
+        assert get_rom_elf_path('esp32p4', 301) == str(elf_dir / 'esp32p4_rev300_rom.elf')
+
+    def test_returns_none_when_no_revision_le_chip_rev(self, monkeypatch, tmp_path: Path):
+        idf = tmp_path / 'idf'
+        elf_dir = tmp_path / 'elfs'
+        _write_roms_json(idf, {'esp32': [{'rev': 300}]})
         monkeypatch.setenv('IDF_PATH', str(idf))
         monkeypatch.setenv('ESP_ROM_ELF_DIR', str(elf_dir))
         assert get_rom_elf_path('esp32', 1) is None
@@ -173,7 +181,7 @@ class TestGetRomElfPath:
         monkeypatch.setenv('IDF_PATH', str(idf))
         monkeypatch.setenv('ESP_ROM_ELF_DIR', str(elf_dir))
         assert get_rom_elf_path('esp32', 0) == str(elf_dir / 'esp32_rev0_rom.elf')
-        assert get_rom_elf_path('esp32', 99) is None
+        assert get_rom_elf_path('esp32', 99) == str(elf_dir / 'esp32_rev0_rom.elf')
 
 
 def _write_roms_json(idf_root: Path, data: dict[str, list[dict[str, int]]]) -> None:

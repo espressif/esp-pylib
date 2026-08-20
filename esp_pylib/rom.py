@@ -43,28 +43,21 @@ def get_roms_json_paths() -> list[str]:
     ]
 
 
-def get_rom_elf_path(target: str, chip_rev: int) -> str | None:
-    """Resolve the ROM ELF path for *target* and *chip_rev*.
+def _load_target_roms(target: str) -> list[dict[str, object]]:
+    """Load ``roms.json`` revision entries for *target*.
 
-    Reads ``roms.json`` from ``IDF_PATH`` (see `get_roms_json_paths`)
-    and, when a matching revision entry exists, returns
-    ``{ESP_ROM_ELF_DIR}/{target}_rev{chip_rev}_rom.elf``.
+    Tries each path from `get_roms_json_paths`. Unreadable files, invalid
+    JSON, or JSON that omits *target* (or lists it with an empty revision
+    list) are skipped so the next location can be tried. Once a file lists
+    *target* with a non-empty revision list, that list is returned
+    exclusively.
 
-    Returns ``None`` when ``IDF_PATH`` or ``ESP_ROM_ELF_DIR`` are unset,
-    when no ``roms.json`` lists *target* with at least one revision entry,
-    or when no entry matches *chip_rev*. Unreadable files, invalid JSON, or
-    JSON that omits *target* (or lists it with an empty revision list) in one
-    path are skipped so the other ``roms.json`` location can be tried. Once a
-    file lists *target* with a non-empty revision list, that file is used
-    exclusively (no fallback if *chip_rev* is missing there).
+    Returns an empty list when ``IDF_PATH`` is unset or no usable entry is
+    found.
     """
-    idf_path = get_idf_path()
-    rom_elf_dir = get_rom_elf_dir()
+    if not get_idf_path():
+        return []
 
-    if not idf_path or not rom_elf_dir:
-        return None
-
-    target_roms: list[dict[str, object]] | None = None
     for roms_json_path in get_roms_json_paths():
         try:
             with open(roms_json_path, encoding='utf-8') as f:
@@ -76,14 +69,55 @@ def get_rom_elf_path(target: str, chip_rev: int) -> str | None:
         candidate = data.get(target)
         if not isinstance(candidate, list) or not candidate:
             continue
-        target_roms = candidate
-        break
+        return candidate
 
-    if not target_roms:
+    return []
+
+
+def _select_rom_revision(target_roms: list[dict[str, object]], chip_rev: int) -> int | None:
+    """Select an exact or next-lower ROM revision from *target_roms*.
+
+    *chip_rev* and each entry's ``rev`` use the same encoding as
+    ``efuse_hal_chip_revision()``: ``major * 100 + minor`` (for example
+    ``0`` is v0.0, ``3`` is v0.03, ``101`` is v1.1, ``300`` is v3.0). Do not
+    mix bare major numbers with this encoding when ordering revisions.
+
+    Prefers an entry whose ``rev`` equals *chip_rev*. If none exists, picks
+    the highest ``rev`` that is still ``<= chip_rev``, matching
+    https://github.com/espressif/esp-rom-elfs#choosing-the-rom-elf-file
+
+    Returns ``None`` when *target_roms* has no usable integer ``rev`` that
+    is ``<= chip_rev``.
+    """
+    candidate_revs: list[int] = []
+    for rom in target_roms:
+        if not isinstance(rom, dict):
+            continue
+        rev = rom.get('rev')
+        if isinstance(rev, int) and rev <= chip_rev:
+            candidate_revs.append(rev)
+    return max(candidate_revs) if candidate_revs else None
+
+
+def get_rom_elf_path(target: str, chip_rev: int) -> str | None:
+    """Resolve the ROM ELF path for *target* and *chip_rev*.
+
+    *chip_rev* is the full chip revision in ``major * 100 + minor`` form
+    (same as ``efuse_hal_chip_revision()`` and ``roms.json`` ``rev``
+    fields). Reads ``roms.json`` from ``IDF_PATH``, selects an exact
+    revision match or the next lower listed revision, and returns
+    ``{ESP_ROM_ELF_DIR}/{target}_rev{selected_rev}_rom.elf``.
+
+    Returns ``None`` when ``IDF_PATH`` or ``ESP_ROM_ELF_DIR`` are unset,
+    when no ``roms.json`` lists *target* with at least one revision entry,
+    or when no entry has ``rev <= chip_rev``.
+    """
+    rom_elf_dir = get_rom_elf_dir()
+    if not get_idf_path() or not rom_elf_dir:
         return None
 
-    for rom in target_roms:
-        if rom.get('rev') == chip_rev:
-            return os.path.join(rom_elf_dir, f'{target}_rev{chip_rev}_rom.elf')
+    selected_rev = _select_rom_revision(_load_target_roms(target), chip_rev)
+    if selected_rev is None:
+        return None
 
-    return None
+    return os.path.join(rom_elf_dir, f'{target}_rev{selected_rev}_rom.elf')
