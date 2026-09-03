@@ -17,6 +17,7 @@ from rich.console import Console
 from esp_pylib.logger import EspLog
 from esp_pylib.logger import EspLogBase
 from esp_pylib.logger import Verbosity
+from esp_pylib.logger import _stream_is_tty
 from esp_pylib.logger import log
 
 
@@ -1095,7 +1096,9 @@ class TestStage:
         EspLog._reset()
         out = StringIO()
         err = StringIO()
-        with patch.object(Console, 'is_terminal', True), patch('sys.stdout', out), patch('sys.stderr', err):
+        with patch('esp_pylib.logger._stream_is_tty', return_value=True), patch('sys.stdout', out), patch(
+            'sys.stderr', err
+        ):
             logger = EspLog()
             logger._stdout = Console(file=out, force_terminal=True, highlight=False, emoji=False)
             logger._stderr = Console(file=err, force_terminal=True, highlight=False, emoji=False)
@@ -1115,7 +1118,7 @@ class TestStage:
     def test_stage_verbose_keeps_all_output(self):
         EspLog._reset()
         out = StringIO()
-        with patch.object(Console, 'is_terminal', True), patch('sys.stdout', out):
+        with patch('esp_pylib.logger._stream_is_tty', return_value=True), patch('sys.stdout', out):
             logger = EspLog()
             logger._stdout = Console(file=out, force_terminal=True, highlight=False, emoji=False)
             logger.set_verbosity(Verbosity.VERBOSE)
@@ -1139,7 +1142,7 @@ class TestStage:
     def test_stage_buffers_note_until_finish_on_tty(self):
         EspLog._reset()
         out = StringIO()
-        with patch.object(Console, 'is_terminal', True), patch('sys.stdout', out):
+        with patch('esp_pylib.logger._stream_is_tty', return_value=True), patch('sys.stdout', out):
             logger = EspLog()
             logger._stdout = Console(file=out, force_terminal=True, highlight=False, emoji=False)
             logger.set_verbosity(Verbosity.NORMAL)
@@ -1157,7 +1160,9 @@ class TestStage:
         EspLog._reset()
         out = StringIO()
         err = StringIO()
-        with patch.object(Console, 'is_terminal', True), patch('sys.stdout', out), patch('sys.stderr', err):
+        with patch('esp_pylib.logger._stream_is_tty', return_value=True), patch('sys.stdout', out), patch(
+            'sys.stderr', err
+        ):
             logger = EspLog()
             logger._stdout = Console(file=out, force_terminal=True, highlight=False, emoji=False)
             logger._stderr = Console(file=err, force_terminal=True, highlight=False, emoji=False)
@@ -1175,7 +1180,7 @@ class TestStage:
         """In-progress stdout progress inside a stage must count toward erase."""
         EspLog._reset()
         out = StringIO()
-        with patch.object(Console, 'is_terminal', True), patch('sys.stdout', out):
+        with patch('esp_pylib.logger._stream_is_tty', return_value=True), patch('sys.stdout', out):
             logger = EspLog()
             logger._stdout = Console(file=out, force_terminal=True, highlight=False, emoji=False)
             logger.set_verbosity(Verbosity.NORMAL)
@@ -1205,7 +1210,7 @@ class TestStage:
         """
         EspLog._reset()
         out = StringIO()
-        with patch.object(Console, 'is_terminal', True), patch('sys.stdout', out):
+        with patch('esp_pylib.logger._stream_is_tty', return_value=True), patch('sys.stdout', out):
             logger = EspLog()
             logger._stdout = Console(file=out, force_terminal=True, highlight=False, emoji=False)
             logger.set_verbosity(Verbosity.NORMAL)
@@ -1241,7 +1246,7 @@ class TestStage:
         """
         EspLog._reset()
         out = StringIO()
-        with patch.object(Console, 'is_terminal', True), patch('sys.stdout', out):
+        with patch('esp_pylib.logger._stream_is_tty', return_value=True), patch('sys.stdout', out):
             logger = EspLog()
             logger._stdout = Console(file=out, force_terminal=True, highlight=False, emoji=False)
             logger.set_verbosity(Verbosity.NORMAL)
@@ -1265,7 +1270,9 @@ class TestStage:
         EspLog._reset()
         out = StringIO()
         err = StringIO()
-        with patch.object(Console, 'is_terminal', True), patch('sys.stdout', out), patch('sys.stderr', err):
+        with patch('esp_pylib.logger._stream_is_tty', return_value=True), patch('sys.stdout', out), patch(
+            'sys.stderr', err
+        ):
             logger = EspLog()
             logger._stdout = Console(file=out, force_terminal=True, highlight=False, emoji=False)
             logger._stderr = Console(file=err, force_terminal=True, highlight=False, emoji=False)
@@ -1283,16 +1290,131 @@ class TestStage:
         assert 'stale note' not in out.getvalue()
 
 
+class TestStreamIsTty:
+    """``_stream_is_tty`` must not raise on mocks or broken streams."""
+
+    def test_missing_isatty(self):
+        assert _stream_is_tty(object()) is False
+
+    def test_non_callable_isatty(self):
+        stream = type('S', (), {'isatty': True})()
+        assert _stream_is_tty(stream) is False
+
+    def test_isatty_raises_oserror(self):
+        class S:
+            def isatty(self):
+                raise OSError('closed')
+
+        assert _stream_is_tty(S()) is False
+
+    def test_isatty_raises_typeerror(self):
+        class S:
+            def isatty(self, extra):  # signature mismatch
+                return extra
+
+        assert _stream_is_tty(S()) is False
+
+    def test_real_callable(self):
+        class S:
+            def isatty(self):
+                return True
+
+        assert _stream_is_tty(S()) is True
+
+
 class TestConsoleOptions:
     """Basic coverage for set_console_options."""
 
     def test_options_apply_to_console(self):
         EspLog._reset()
         logger = EspLog()
-        logger.set_console_options(width=10000, soft_wrap=True)
+        # Default soft_wrap=True: Rich must not insert newlines even at width 80.
+        logger.set_console_options(width=80)
         out = StringIO()
         logger.print('A' * 120, file=out)
         assert out.getvalue().splitlines() == ['A' * 120]
+
+    def test_default_soft_wrap_keeps_long_print_one_line(self):
+        """One log.print() stays one physical line; the terminal may wrap visually."""
+        EspLog._reset()
+        logger = EspLog()
+        out = StringIO()
+        # force_terminal + width 80 would wrap if soft_wrap were False
+        logger.set_console_options(width=80, force_terminal=True)
+        msg = "Read 3072 bytes from 0x00008000 in 0.1 seconds (246.0 kbit/s) to '/tmp/tmpXYZABC123456'."
+        logger.print(msg, file=out)
+        assert out.getvalue().splitlines() == [msg]
+
+    def test_soft_wrap_false_folds_at_width(self):
+        """Opting into Rich wrapping must still split a long line at width."""
+        EspLog._reset()
+        logger = EspLog()
+        out = StringIO()
+        logger.set_console_options(width=80, force_terminal=True, soft_wrap=False)
+        logger.print('A' * 120, file=out)
+        lines = out.getvalue().splitlines()
+        assert len(lines) > 1
+        assert ''.join(lines) == 'A' * 120
+
+    def test_force_color_pipe_does_not_collapse_stage(self):
+        """CI sets FORCE_COLOR=1 on a pipe; that must not enable stage collapse CSI."""
+        EspLog._reset()
+        out = StringIO()
+        with patch.dict(os.environ, {'FORCE_COLOR': '1'}, clear=False), patch('sys.stdout', out):
+            logger = EspLog()
+            # Rebuild consoles under FORCE_COLOR the way production does
+            logger._stdout = logger._make_console(file=out)
+            logger.set_verbosity(Verbosity.NORMAL)
+            assert logger.stdout.is_terminal is True  # Rich sees FORCE_COLOR
+            assert not logger._stage_can_collapse()  # but we require a real TTY
+            logger.stage()
+            logger.print('Reading 3072 bytes...')
+            logger.stage(finish=True)
+            logger.print('0x110000 0x10000')
+        text = out.getvalue()
+        assert '\x1b[1A' not in text
+        assert '\x1b[2K' not in text
+        last = text.strip().rsplit('\n')[-1]
+        assert last.split(' ') == ['0x110000', '0x10000']
+
+    def test_force_terminal_pipe_does_not_collapse_stage(self):
+        """force_terminal colours a pipe; that must not enable stage collapse CSI."""
+        EspLog._reset()
+        out = StringIO()
+        with patch('sys.stdout', out):
+            logger = EspLog()
+            logger.set_console_options(force_terminal=True)
+            logger.set_verbosity(Verbosity.NORMAL)
+            assert logger.stdout.is_terminal is True
+            assert not logger._stage_can_collapse()
+            logger.stage()
+            logger.print('Reading 3072 bytes...')
+            logger.stage(finish=True)
+            logger.print('0x110000 0x10000')
+        text = out.getvalue()
+        assert '\x1b[1A' not in text
+        assert '\x1b[2K' not in text
+        last = text.strip().rsplit('\n')[-1]
+        assert last.split(' ') == ['0x110000', '0x10000']
+
+    def test_force_color_pipe_progress_ends_with_newline(self):
+        """In-place progress must not leave a mid-line fragment under FORCE_COLOR on a pipe."""
+        EspLog._reset()
+        out = StringIO()
+        with patch.dict(os.environ, {'FORCE_COLOR': '1'}, clear=False), patch('sys.stdout', out):
+            logger = EspLog()
+            logger._stdout = logger._make_console(file=out)
+            logger.set_verbosity(Verbosity.NORMAL)
+            logger.stage()
+            with logger.progress(total=3072, unit='B') as progress:
+                progress.update(advance=3072, description='Reading from 0x00000c00')
+            logger.stage(finish=True)
+            logger.print('0x110000 0x10000')
+        text = out.getvalue()
+        assert '\r' not in text
+        assert '\x1b[1A' not in text
+        last = text.strip().rsplit('\n')[-1]
+        assert last.split(' ') == ['0x110000', '0x10000']
 
     def test_file_pins_stdout(self):
         EspLog._reset()
@@ -1304,6 +1426,36 @@ class TestConsoleOptions:
         assert logger.stdout.is_terminal is False
         logger.print('deliverable')
         assert out.getvalue() == 'deliverable\n'
+
+    def test_pinned_file_progress_is_line_oriented_when_process_stdout_is_tty(self):
+        """Pinning stdout must not use \\r redraws just because the process TTY is interactive."""
+
+        class _Tty:
+            def isatty(self) -> bool:
+                return True
+
+            def write(self, data: str) -> int:
+                raise AssertionError('progress must not leak to process stdout')
+
+            def flush(self) -> None:
+                pass
+
+        EspLog._reset()
+        logger = EspLog()
+        out = StringIO()
+        logger.set_console_options(file=out)
+        logger.set_verbosity(Verbosity.NORMAL)
+        with patch('sys.stdout', _Tty()):
+            assert logger._get_interactive_console() is None
+            logger.progress_bar(cur_iter=1, total_iters=2, prefix='P ', suffix='')
+            logger.progress_bar(cur_iter=2, total_iters=2, prefix='P ', suffix='')
+        text = out.getvalue()
+        assert '\r' not in text
+        assert '\x1b[' not in text
+        lines = [ln for ln in text.splitlines() if ln]
+        assert len(lines) == 2
+        assert lines[0].startswith('P ') and '50.0%' in lines[0]
+        assert lines[1].startswith('P ') and '100.0%' in lines[1]
 
     def test_pinned_file_stays_ansi_free_with_force_color(self):
         # Rich decides on its own whether a Console target understands escape

@@ -143,7 +143,7 @@ print(info_msg)                     # → log.print(info_msg)
 
 Use `log.err` only for real error diagnostics — it adds `ERROR:` and forwards to the IDE WebSocket. Reserve plain `print()` only for primary data output that is not a diagnostic (e.g. final report bytes piped to stdout, GDB backtrace text for another process).
 
-Tools whose stdout is machine output (JSON, a report, bytes for another process) can call `log.set_console_options(...)` once at startup to set the Rich `Console`: `width` / `soft_wrap` to stop wrapping, `force_terminal` to keep colour when spawned by `idf.py`, `no_color`, `highlight` for Rich auto-highlighting, `quiet` to mute all output (rely on the return code), or `file=` to pin stdout to an `--output` deliverable (the pinned console turns `force_terminal` off, so the file stays ANSI-free even when the environment sets `FORCE_COLOR`, as e.g. the esp-idf CI does; stderr is never pinned). Only those options are configurable — any other keyword raises `TypeError`, so the shared output style can't drift.
+Tools whose stdout is machine output (JSON, a report, bytes for another process) can call `log.set_console_options(...)` once at startup to set the Rich `Console`: `width` for layout (progress bars, and folding when wrap is opted in), `force_terminal` to keep colour when spawned by `idf.py`, `no_color`, `highlight` for Rich auto-highlighting, `quiet` to mute all output (rely on the return code), or `file=` to pin stdout to an `--output` deliverable (the pinned console turns `force_terminal` off, so the file stays ANSI-free even when the environment sets `FORCE_COLOR`, as e.g. the esp-idf CI does; stderr is never pinned). Progress and counters follow that pin: in-place `\r` redraws require the pin target itself to be a TTY — a process TTY on `sys.stdout` is not enough. Soft wrap defaults to **on** (`soft_wrap=True`): Rich does not insert newlines — a real terminal wraps for display, so one `log.print()` stays one logical line for captures and last-line parsers. Pass `soft_wrap=False` only if a tool explicitly wants Rich to fold long lines. Stage collapse and in-place progress require a real TTY (`isatty`) on the destination stream; `FORCE_COLOR` alone (common in esp-idf CI) colours a pipe but does **not** enable cursor-up / `\r` redraws. Only those options are configurable — any other keyword raises `TypeError`, so the shared output style can't drift.
 
 **E) Progress bars:**
 
@@ -576,9 +576,9 @@ For each Medium / High entry, name the file(s) touched and call out what the rev
 
 ### Terminal width in tests
 
-After Step 5, Rich-based helpers (`log.note`, progress bars, tables) honour the detected terminal width. In pytest (especially CI or IDE test runners), `stdout`/`stderr` are often pipes with a narrow or zero width, so long lines wrap and substring assertions on a single line fail intermittently.
+After Step 5, Rich-based helpers (`log.note`, progress bars, tables) use the detected terminal width for layout such as progress bars. EspLog defaults to `soft_wrap=True`, so a single `log.print()` / `log.note()` string is **not** split across physical lines — the terminal wraps for display. That means most substring assertions on one log line stay reliable even when pytest captures stdout as a narrow pipe.
 
-Set a stable width once for the whole test session — the easiest fix is `conftest.py`:
+If a test still opts into wrapping (`log.set_console_options(soft_wrap=False)`) or asserts on progress-bar column layout, set a stable width once for the whole test session — the easiest fix is `conftest.py`:
 
 ```python
 import os
@@ -586,7 +586,11 @@ import os
 os.environ.setdefault('COLUMNS', '120')
 ```
 
-Pick a value comfortably wider than the longest expected log line. For a single test module, `monkeypatch.setenv('COLUMNS', '120')` works too. Alternatively, call `log.set_console_options(width=120, soft_wrap=False)` in a session-scoped autouse fixture when the suite already configures the logger at startup.
+Pick a value comfortably wider than the longest expected log line. For a single test module, `monkeypatch.setenv('COLUMNS', '120')` works too. Alternatively, call `log.set_console_options(width=120)` in a session-scoped autouse fixture when the suite already configures the logger at startup.
+
+### Pinned stdout vs TTY progress
+
+`log.set_console_options(file=...)` pins stdout (and default progress/counters) to that deliverable. In-place `\r` progress still requires `isatty` on **that file**, not on the process `sys.stdout`. If a tool writes an `--output` report while attached to a terminal, progress is one newline-terminated line per update in the file — use `log.progress(..., file=sys.stderr)` when the bar should stay on the live TTY instead.
 
 ### Logger prefixes in tests
 
@@ -628,6 +632,7 @@ Use this split when reviewing a PR:
 |--------|-----------|-------|
 | Log prefix / styling unified across tools (`Notice` → `NOTE:`, `WARNING:` on stderr, cyan `HINT:`) | No | Acceptable for consistent Espressif CLI output; update golden files / snapshots — but do not assert on prefixes in tool tests (see [§ Logger prefixes in tests](#logger-prefixes-in-tests)) |
 | Progress bar or stage rendering on a TTY vs pipe | No | Behaviour already depends on terminal capabilities; pin `COLUMNS` in tests |
+| Default `soft_wrap=True` (Rich does not insert newlines; the terminal wraps for display) | No | Visual wrapping only — one `log.print()` stays one logical line. Pass `soft_wrap=False` to restore Rich folding |
 | Renamed / removed Python function, class, or module export | Yes, **only if it was public API** | Private symbols: rename freely; public symbols: wrap or keep a deprecated alias |
 | Changed function signature, return type, or raised exception type | Yes, **only if it was public API** | Private helpers: update call sites; public callables: adapters required |
 | Renamed CLI flag, changed default, or different positional arity | Yes | Treat as High in Step 16 unless documented as intentional |
