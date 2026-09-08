@@ -490,7 +490,9 @@ class EspLog(EspLogBase):
                 'no_color': None,
                 'force_terminal': None,
                 'width': None,
-                'soft_wrap': False,
+                # Soft wrap: Rich must not insert newlines; a real terminal
+                # wraps for display. Keeps one log.print() as one logical line
+                'soft_wrap': True,
                 'quiet': False,
                 'file': None,
             }
@@ -517,7 +519,7 @@ class EspLog(EspLogBase):
         no_color: bool | None = None,
         force_terminal: bool | None = None,
         width: int | None = None,
-        soft_wrap: bool = False,
+        soft_wrap: bool = True,
         highlight: bool = False,
         quiet: bool = False,
     ) -> None:
@@ -527,10 +529,11 @@ class EspLog(EspLogBase):
         emoji) stays fixed and all tools share one style. force_terminal applies to
         both stdout and stderr. file= pins stdout to that target (e.g. an --output
         file) and turns force_terminal off there, so it stays ANSI-free even with
-        FORCE_COLOR set in the environment; stderr is never pinned. highlight turns
-        on Rich auto-highlighting of plain output (off by default). quiet mutes every
-        console, so a script can rely on the return code alone. Each call replaces
-        the previous one.
+        FORCE_COLOR set in the environment; stderr is never pinned. soft_wrap defaults
+        to True so Rich does not insert newlines (the terminal wraps for display).
+        highlight turns on Rich auto-highlighting of plain output (off by default).
+        quiet mutes every console, so a script can rely on the return code alone.
+        Each call replaces the previous one.
         """
         self._options = dict(self._options_default)
         self._options.update(
