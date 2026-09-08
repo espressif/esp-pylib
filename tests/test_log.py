@@ -1328,6 +1328,36 @@ class TestConsoleOptions:
         logger.print('deliverable')
         assert out.getvalue() == 'deliverable\n'
 
+    def test_pinned_file_progress_is_line_oriented_when_process_stdout_is_tty(self):
+        """Pinning stdout must not use \\r redraws just because the process TTY is interactive."""
+
+        class _Tty:
+            def isatty(self) -> bool:
+                return True
+
+            def write(self, data: str) -> int:
+                raise AssertionError('progress must not leak to process stdout')
+
+            def flush(self) -> None:
+                pass
+
+        EspLog._reset()
+        logger = EspLog()
+        out = StringIO()
+        logger.set_console_options(file=out)
+        logger.set_verbosity(Verbosity.NORMAL)
+        with patch('sys.stdout', _Tty()):
+            assert logger._get_interactive_console() is None
+            logger.progress_bar(cur_iter=1, total_iters=2, prefix='P ', suffix='')
+            logger.progress_bar(cur_iter=2, total_iters=2, prefix='P ', suffix='')
+        text = out.getvalue()
+        assert '\r' not in text
+        assert '\x1b[' not in text
+        lines = [ln for ln in text.splitlines() if ln]
+        assert len(lines) == 2
+        assert lines[0].startswith('P ') and '50.0%' in lines[0]
+        assert lines[1].startswith('P ') and '100.0%' in lines[1]
+
     def test_pinned_file_stays_ansi_free_with_force_color(self):
         # Rich decides on its own whether a Console target understands escape
         # sequences, and it consults FORCE_COLOR/TTY_COMPATIBLE before it ever

@@ -143,7 +143,7 @@ print(info_msg)                     # → log.print(info_msg)
 
 Use `log.err` only for real error diagnostics — it adds `ERROR:` and forwards to the IDE WebSocket. Reserve plain `print()` only for primary data output that is not a diagnostic (e.g. final report bytes piped to stdout, GDB backtrace text for another process).
 
-Tools whose stdout is machine output (JSON, a report, bytes for another process) can call `log.set_console_options(...)` once at startup to set the Rich `Console`: `width` for layout (progress bars, and folding when wrap is opted in), `force_terminal` to keep colour when spawned by `idf.py`, `no_color`, `highlight` for Rich auto-highlighting, `quiet` to mute all output (rely on the return code), or `file=` to pin stdout to an `--output` deliverable (the pinned console turns `force_terminal` off, so the file stays ANSI-free even when the environment sets `FORCE_COLOR`, as e.g. the esp-idf CI does; stderr is never pinned). Soft wrap defaults to **on** (`soft_wrap=True`): Rich does not insert newlines — a real terminal wraps for display, so one `log.print()` stays one logical line for captures and last-line parsers. Pass `soft_wrap=False` only if a tool explicitly wants Rich to fold long lines. Only those options are configurable — any other keyword raises `TypeError`, so the shared output style can't drift.
+Tools whose stdout is machine output (JSON, a report, bytes for another process) can call `log.set_console_options(...)` once at startup to set the Rich `Console`: `width` for layout (progress bars, and folding when wrap is opted in), `force_terminal` to keep colour when spawned by `idf.py`, `no_color`, `highlight` for Rich auto-highlighting, `quiet` to mute all output (rely on the return code), or `file=` to pin stdout to an `--output` deliverable (the pinned console turns `force_terminal` off, so the file stays ANSI-free even when the environment sets `FORCE_COLOR`, as e.g. the esp-idf CI does; stderr is never pinned). Progress and counters follow that pin. Soft wrap defaults to **on** (`soft_wrap=True`): Rich does not insert newlines — a real terminal wraps for display, so one `log.print()` stays one logical line for captures and last-line parsers. Pass `soft_wrap=False` only if a tool explicitly wants Rich to fold long lines. Stage collapse and in-place progress follow Rich `Console.is_terminal` (so `FORCE_COLOR` / `force_terminal` keep interactive redraws when a parent such as `idf.py` pipes the child but still presents a TTY). Only those options are configurable — any other keyword raises `TypeError`, so the shared output style can't drift.
 
 **E) Progress bars:**
 
@@ -587,6 +587,10 @@ os.environ.setdefault('COLUMNS', '120')
 ```
 
 Pick a value comfortably wider than the longest expected log line. For a single test module, `monkeypatch.setenv('COLUMNS', '120')` works too. Alternatively, call `log.set_console_options(width=120)` in a session-scoped autouse fixture when the suite already configures the logger at startup.
+
+### Pinned stdout vs TTY progress
+
+`log.set_console_options(file=...)` pins stdout (and default progress/counters) to that deliverable. The pin turns `force_terminal` off, so in-place `\r` progress is off for a non-terminal file even when process `sys.stdout` is a TTY. If a tool writes an `--output` report while attached to a terminal, progress is one newline-terminated line per update in the file — use `log.progress(..., file=sys.stderr)` when the bar should stay on the live TTY instead.
 
 ### Logger prefixes in tests
 
