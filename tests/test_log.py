@@ -1289,10 +1289,33 @@ class TestConsoleOptions:
     def test_options_apply_to_console(self):
         EspLog._reset()
         logger = EspLog()
-        logger.set_console_options(width=10000, soft_wrap=True)
+        # Default soft_wrap=True: Rich must not insert newlines even at width 80.
+        logger.set_console_options(width=80)
         out = StringIO()
         logger.print('A' * 120, file=out)
         assert out.getvalue().splitlines() == ['A' * 120]
+
+    def test_default_soft_wrap_keeps_long_print_one_line(self):
+        """One log.print() stays one physical line; the terminal may wrap visually."""
+        EspLog._reset()
+        logger = EspLog()
+        out = StringIO()
+        # force_terminal + width 80 would wrap if soft_wrap were False
+        logger.set_console_options(width=80, force_terminal=True)
+        msg = "Read 3072 bytes from 0x00008000 in 0.1 seconds (246.0 kbit/s) to '/tmp/tmpXYZABC123456'."
+        logger.print(msg, file=out)
+        assert out.getvalue().splitlines() == [msg]
+
+    def test_soft_wrap_false_folds_at_width(self):
+        """Opting into Rich wrapping must still split a long line at width."""
+        EspLog._reset()
+        logger = EspLog()
+        out = StringIO()
+        logger.set_console_options(width=80, force_terminal=True, soft_wrap=False)
+        logger.print('A' * 120, file=out)
+        lines = out.getvalue().splitlines()
+        assert len(lines) > 1
+        assert ''.join(lines) == 'A' * 120
 
     def test_file_pins_stdout(self):
         EspLog._reset()
@@ -1304,6 +1327,36 @@ class TestConsoleOptions:
         assert logger.stdout.is_terminal is False
         logger.print('deliverable')
         assert out.getvalue() == 'deliverable\n'
+
+    def test_pinned_file_progress_is_line_oriented_when_process_stdout_is_tty(self):
+        """Pinning stdout must not use \\r redraws just because the process TTY is interactive."""
+
+        class _Tty:
+            def isatty(self) -> bool:
+                return True
+
+            def write(self, data: str) -> int:
+                raise AssertionError('progress must not leak to process stdout')
+
+            def flush(self) -> None:
+                pass
+
+        EspLog._reset()
+        logger = EspLog()
+        out = StringIO()
+        logger.set_console_options(file=out)
+        logger.set_verbosity(Verbosity.NORMAL)
+        with patch('sys.stdout', _Tty()):
+            assert logger._get_interactive_console() is None
+            logger.progress_bar(cur_iter=1, total_iters=2, prefix='P ', suffix='')
+            logger.progress_bar(cur_iter=2, total_iters=2, prefix='P ', suffix='')
+        text = out.getvalue()
+        assert '\r' not in text
+        assert '\x1b[' not in text
+        lines = [ln for ln in text.splitlines() if ln]
+        assert len(lines) == 2
+        assert lines[0].startswith('P ') and '50.0%' in lines[0]
+        assert lines[1].startswith('P ') and '100.0%' in lines[1]
 
     def test_pinned_file_stays_ansi_free_with_force_color(self):
         # Rich decides on its own whether a Console target understands escape

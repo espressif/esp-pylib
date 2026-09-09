@@ -48,6 +48,7 @@ __all__ = [
     'Verbosity',
 ]
 
+
 # Current progress output stream for progress_bar() / Rich (None = default stdout).
 _progress_output: contextvars.ContextVar[Any | None] = contextvars.ContextVar(
     '_progress_output',
@@ -490,7 +491,9 @@ class EspLog(EspLogBase):
                 'no_color': None,
                 'force_terminal': None,
                 'width': None,
-                'soft_wrap': False,
+                # Soft wrap: Rich must not insert newlines; a real terminal
+                # wraps for display. Keeps one log.print() as one logical line
+                'soft_wrap': True,
                 'quiet': False,
                 'file': None,
             }
@@ -517,7 +520,7 @@ class EspLog(EspLogBase):
         no_color: bool | None = None,
         force_terminal: bool | None = None,
         width: int | None = None,
-        soft_wrap: bool = False,
+        soft_wrap: bool = True,
         highlight: bool = False,
         quiet: bool = False,
     ) -> None:
@@ -527,10 +530,13 @@ class EspLog(EspLogBase):
         emoji) stays fixed and all tools share one style. force_terminal applies to
         both stdout and stderr. file= pins stdout to that target (e.g. an --output
         file) and turns force_terminal off there, so it stays ANSI-free even with
-        FORCE_COLOR set in the environment; stderr is never pinned. highlight turns
-        on Rich auto-highlighting of plain output (off by default). quiet mutes every
-        console, so a script can rely on the return code alone. Each call replaces
-        the previous one.
+        FORCE_COLOR set in the environment; stderr is never pinned. Progress and
+        counters follow that pin (a pinned non-terminal file is not interactive
+        just because process stdout is a TTY). soft_wrap defaults to True so Rich
+        does not insert newlines (the terminal wraps for display). highlight turns
+        on Rich auto-highlighting of plain output (off by default). quiet mutes
+        every console, so a script can rely on the return code alone. Each call
+        replaces the previous one.
         """
         self._options = dict(self._options_default)
         self._options.update(
@@ -798,35 +804,32 @@ class EspLog(EspLogBase):
             file, line = self._get_call_site()
             send_log_message('error', _render_message(args), suggestion, file, line)
 
-    def _get_interactive_console(self) -> Console | None:
-        """Return a Console for in-place overwrite, or None for non-interactive output."""
+    def _progress_output_console(self) -> Console:
+        """Console that receives progress / counter output.
+
+        Honours ``progress(file=...)`` / ``counter(file=...)`` and otherwise
+        follows stdout, including a ``set_console_options(file=)`` pin.
+        """
         pf = _progress_output.get()
         if pf is sys.stderr:
-            if self.stderr.is_terminal:
-                return self.stderr
-            return None
+            return self.stderr
         if pf is not None and pf is not sys.stdout:
-            try:
-                if hasattr(pf, 'isatty') and pf.isatty():
-                    return self._make_console(file=pf)
-            except (AttributeError, ValueError, OSError):
-                # ``isatty()`` raises ValueError on closed streams, AttributeError
-                # on non-stream objects, OSError on detached fds. Treat all as
-                # "not a TTY" rather than letting them crash logging.
-                pass
-            return None
-        if self.stdout.is_terminal:
-            return self.stdout
+            return self._make_console(file=pf)
+        return self.stdout
+
+    def _get_interactive_console(self) -> Console | None:
+        """Return a Console for in-place overwrite, or None for non-interactive output.
+
+        Uses Rich ``Console.is_terminal`` on the progress destination (so
+        ``FORCE_COLOR`` / ``force_terminal`` keep in-place progress when a parent
+        such as ``idf.py`` pipes the child but still presents a TTY). A
+        ``set_console_options(file=)`` pin turns ``force_terminal`` off, so the
+        pin target is not interactive just because process stdout is a TTY.
+        """
+        dest = self._progress_output_console()
+        if dest.is_terminal:
+            return dest
         return None
-
-    def _get_progress_print_file(self) -> Any:
-        """Stream used for progress when not using ``_stdout`` / ``_stderr`` Consoles."""
-        pf = _progress_output.get()
-        return sys.stdout if pf is None else pf
-
-    def _progress_console_for_stream(self, file: Any) -> Console:
-        """Console for rendering `ProgressBar` on an arbitrary stream."""
-        return self._make_console(file=file)
 
     @staticmethod
     def _erase_line(console: Console) -> None:
@@ -841,7 +844,6 @@ class EspLog(EspLogBase):
         """Print *prefix*/*suffix* on a TTY with in-place overwrite, or one line per call."""
         if self._verbosity == Verbosity.SILENT:
             return
-        out = self._get_progress_print_file()
         interactive = self._get_interactive_console()
         # Only an interactive console at non-verbose levels overwrites the line in
         # place; otherwise every call already ends with a newline.
@@ -851,7 +853,7 @@ class EspLog(EspLogBase):
         # final call would just duplicate the last line; skip it.
         if final and not overwrites_in_place:
             return
-        c = interactive if interactive is not None else self._progress_console_for_stream(out)
+        c = interactive if interactive is not None else self._progress_output_console()
         if overwrites_in_place:
             end = '\n' if final else ''
             self._erase_line(c)
@@ -932,13 +934,12 @@ class EspLog(EspLogBase):
 
         suffix_part = f' {percent:>5}%{suffix} '
 
-        out = self._get_progress_print_file()
         interactive = self._get_interactive_console()
-        # In-place redraw on an interactive console; otherwise one full line per update on ``out``.
+        # In-place redraw on an interactive console; otherwise one full line per update.
         if interactive is not None:
             c = interactive
         else:
-            c = self._progress_console_for_stream(out)
+            c = self._progress_output_console()
 
         # Pick the bar renderable: Rich's ProgressBar when the console can
         # shade the trailing portion (so the bar stays at constant width via
