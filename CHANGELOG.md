@@ -1,3 +1,11 @@
+## v1.1.5 (2026-09-09)
+
+### 🐛 Bug Fixes
+
+- **logger**: route progress through set_console_options file pin *(Peter Dragun - 0e7c8d2)*
+- **logger**: enable soft wrap by default *(Peter Dragun - b4d810d)*
+
+
 ## v1.1.4 (2026-08-20)
 
 ### 🐛 Bug Fixes
