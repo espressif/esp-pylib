@@ -17,6 +17,10 @@ import sys
 from typing import TYPE_CHECKING
 from typing import Any
 
+from rich.console import Console
+from rich.prompt import IntPrompt
+from rich.table import Table
+
 from esp_pylib.constants import ESPRESSIF_VID
 from esp_pylib.constants import LINUX_DEVICE_PATTERNS
 from esp_pylib.constants import MACOS_DEVICE_PATTERNS
@@ -40,6 +44,8 @@ __all__ = [
     'get_port_names',
     'get_port_vid_pid',
     'parse_port_filters',
+    'pick_port',
+    'prompt_port',
 ]
 
 # CLI filter keys (e.g. ``--port-filter vid=0x303A``) are short, single-word
@@ -166,6 +172,67 @@ def detect_port(**filters: Any) -> str:
         raise NoSerialPortFoundError('No serial ports found. Check the connection and the device drivers.')
     # ``port.device`` is typed as ``Any`` because pyserial has no stubs;
     # the explicit ``str(...)`` guarantees the return type and matches the signature.
+    return str(ports[0].device)
+
+
+def _port_field(value: Any) -> str:
+    # pyserial reports a literal ``n/a`` for ports without metadata
+    text = str(value or '').strip()
+    return '' if text.lower() == 'n/a' else text
+
+
+def prompt_port(ports: list[ListPortInfo], console: Console | None = None) -> str:
+    """Show ``ports`` as a numbered table and prompt the user to choose one.
+
+    Ports are listed in the given order (pass `get_port_list` output to keep
+    the usual priority) and the first one is the default choice. The table
+    and prompt go to stderr unless ``console`` is given, keeping stdout clean
+    for piped output.
+
+    :returns: The chosen port's device path.
+    :raises ValueError: if ``ports`` is empty.
+    """
+    if not ports:
+        raise ValueError('No ports to pick from.')
+    console = console or Console(stderr=True)
+
+    table = Table(box=None, pad_edge=False)
+    table.add_column('#', justify='right', style='bold')
+    table.add_column('Port', style='cyan')
+    table.add_column('Description')
+    table.add_column('VID:PID')
+    table.add_column('Serial')
+    for i, port in enumerate(ports, 1):
+        vid_pid = f'{port.vid:04X}:{port.pid:04X}' if port.vid is not None and port.pid is not None else ''
+        table.add_row(
+            str(i),
+            str(port.device or ''),
+            _port_field(port.description),
+            vid_pid,
+            _port_field(port.serial_number),
+            style='green' if port.vid == ESPRESSIF_VID else None,
+        )
+    console.print(table)
+
+    choices = [str(i) for i in range(1, len(ports) + 1)]
+    index = IntPrompt.ask('Select port', console=console, choices=choices, show_choices=False, default=1)
+    return str(ports[index - 1].device)
+
+
+def pick_port(**filters: Any) -> str:
+    """Interactive counterpart of `detect_port`: let the user choose among matching ports.
+
+    Prompts with `prompt_port` when both stdin and stderr are terminals;
+    otherwise returns the highest-priority port like `detect_port`, so
+    scripted runs never block on a prompt.
+
+    :raises NoSerialPortFoundError: if no port matches the given filters.
+    """
+    ports = get_port_list(**filters)
+    if not ports:
+        raise NoSerialPortFoundError('No serial ports found. Check the connection and the device drivers.')
+    if sys.stdin.isatty() and sys.stderr.isatty():
+        return prompt_port(ports)
     return str(ports[0].device)
 
 

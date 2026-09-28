@@ -4,9 +4,12 @@
 
 from __future__ import annotations
 
+import contextlib
+import io
 from unittest.mock import patch
 
 import pytest
+from rich.console import Console
 
 from esp_pylib import serial_ports as ports_mod
 from esp_pylib.constants import ESPRESSIF_VID
@@ -17,6 +20,8 @@ from esp_pylib.serial_ports import get_port_list
 from esp_pylib.serial_ports import get_port_names
 from esp_pylib.serial_ports import get_port_vid_pid
 from esp_pylib.serial_ports import parse_port_filters
+from esp_pylib.serial_ports import pick_port
+from esp_pylib.serial_ports import prompt_port
 
 
 class FakePort:
@@ -342,6 +347,78 @@ class TestDetectPort:
         fake = [FakePort('/dev/ttyUSB0', vid=0x1234)]
         with _patch_comports(fake), pytest.raises(NoSerialPortFoundError):
             detect_port(vids=[ESPRESSIF_VID])
+
+
+@contextlib.contextmanager
+def _pick_env(ports: list[FakePort], isatty: bool, picked: str | None = None):
+    """Patch comports and TTY detection, yielding a mock of `prompt_port`."""
+    tty = type('FakeTty', (), {'isatty': lambda self: isatty})()
+    with contextlib.ExitStack() as stack:
+        stack.enter_context(_patch_comports(ports))
+        stack.enter_context(_patch_platform('linux'))
+        stack.enter_context(patch.multiple(ports_mod.sys, stdin=tty, stderr=tty))
+        yield stack.enter_context(patch.object(ports_mod, 'prompt_port', return_value=picked))
+
+
+class TestPickPort:
+    FAKE = [FakePort('/dev/ttyUSB0', vid=ESPRESSIF_VID), FakePort('/dev/ttyUSB1')]
+
+    def test_prompts_when_interactive(self):
+        with _pick_env(self.FAKE, isatty=True, picked='/dev/ttyUSB1') as prompt:
+            assert pick_port() == '/dev/ttyUSB1'
+        assert [p.device for p in prompt.call_args[0][0]] == ['/dev/ttyUSB0', '/dev/ttyUSB1']
+
+    def test_no_prompt_when_not_interactive(self):
+        with _pick_env(self.FAKE, isatty=False) as prompt:
+            assert pick_port() == '/dev/ttyUSB0'
+        prompt.assert_not_called()
+
+    def test_applies_filters(self):
+        with _pick_env(self.FAKE, isatty=True, picked='/dev/ttyUSB1') as prompt:
+            assert pick_port(names=['USB1']) == '/dev/ttyUSB1'
+        assert [p.device for p in prompt.call_args[0][0]] == ['/dev/ttyUSB1']
+
+    def test_raises_when_no_ports(self):
+        with _pick_env([], isatty=True), pytest.raises(NoSerialPortFoundError):
+            pick_port()
+
+    def test_detect_port_never_prompts(self):
+        with _pick_env(self.FAKE, isatty=True) as prompt:
+            assert detect_port() == '/dev/ttyUSB0'
+        prompt.assert_not_called()
+
+
+class TestPromptPort:
+    PORTS = [
+        FakePort('/dev/ttyACM0', vid=ESPRESSIF_VID, pid=0x1001, description='USB JTAG/serial', serial_number='AA:BB'),
+        FakePort('/dev/ttyUSB0', vid=0x10C4, pid=0xEA60, description='CP2102', serial_number='0001'),
+        FakePort('/dev/ttyS0', description='n/a'),
+    ]
+
+    @staticmethod
+    def _console(answer: str) -> Console:
+        console = Console(file=io.StringIO(), width=120)
+        console.input = lambda *args, **kwargs: answer  # type: ignore[method-assign]
+        return console
+
+    def test_returns_chosen_port(self):
+        assert prompt_port(self.PORTS, console=self._console('2')) == '/dev/ttyUSB0'
+
+    def test_defaults_to_first_port(self):
+        assert prompt_port(self.PORTS, console=self._console('')) == '/dev/ttyACM0'
+
+    def test_lists_port_details(self):
+        console = self._console('1')
+        prompt_port(self.PORTS, console=console)
+        output = console.file.getvalue()
+        assert '303A:1001' in output
+        assert 'CP2102' in output
+        assert 'AA:BB' in output
+        assert 'n/a' not in output
+
+    def test_raises_when_empty(self):
+        with pytest.raises(ValueError):
+            prompt_port([])
 
 
 class TestParsePortFilters:
