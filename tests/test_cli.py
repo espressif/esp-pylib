@@ -17,11 +17,12 @@ from esp_pylib.cli_types import SerialPortType
 
 
 class _FakePort:
-    def __init__(self, device, description='', vid=None, pid=None):
+    def __init__(self, device, description='', vid=None, pid=None, serial_number=None):
         self.device = device
         self.description = description
         self.vid = vid
         self.pid = pid
+        self.serial_number = serial_number
 
 
 class TestAnyIntType:
@@ -133,6 +134,31 @@ class TestSerialPortType:
         helps = {i.value: i.help for i in items}
         assert helps['/dev/ttyS0'] == 'Description: Built-in UART'
         assert helps['/dev/ttyUSB1'] == 'VID: 0x303A, PID: 0x1001'
+
+    def test_shell_complete_help_includes_serial_number(self):
+        # On USB-Serial/JTAG and USB-OTG the serial number is the chip's MAC
+        # address, which tells apart multiple connected boards.
+        fake_ports = [
+            _FakePort(
+                '/dev/ttyACM0',
+                'USB JTAG',
+                vid=0x303A,
+                pid=0x1001,
+                serial_number='AA:BB:CC:DD:EE:FF',
+            )
+        ]
+        t = SerialPortType()
+        with patch('esp_pylib.serial_ports.get_port_list', return_value=fake_ports):
+            items = t.shell_complete(None, None, '')
+        assert items[0].help == 'Description: USB JTAG, VID: 0x303A, PID: 0x1001, SN: AA:BB:CC:DD:EE:FF'
+
+    @pytest.mark.parametrize('serial_number', ['', 'n/a', 'N/A'])
+    def test_shell_complete_help_skips_placeholder_serial_number(self, serial_number):
+        fake_ports = [_FakePort('/dev/ttyUSB0', 'CP210x', vid=0x10C4, pid=0xEA60, serial_number=serial_number)]
+        t = SerialPortType()
+        with patch('esp_pylib.serial_ports.get_port_list', return_value=fake_ports):
+            items = t.shell_complete(None, None, '')
+        assert items[0].help == 'Description: CP210x, VID: 0x10C4, PID: 0xEA60'
 
     def test_format_port_completion_help_with_no_metadata(self):
         # A port with no description, no VID, no PID — e.g. a bare ``socket://``

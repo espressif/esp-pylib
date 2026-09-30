@@ -139,7 +139,7 @@ class SerialPortType(click.ParamType):
 
         The format matches the convention shared across Espressif tools::
 
-            "Description: <text>, VID: 0xVVVV, PID: 0xPPPP"
+            "Description: <text>, VID: 0xVVVV, PID: 0xPPPP, SN: <serial_number>"
 
         Missing fields (``None`` / empty string, or the literal ``n/a``
         pyserial reports for ports without metadata) are silently dropped, so a
@@ -157,6 +157,9 @@ class SerialPortType(click.ParamType):
         pid = getattr(port, 'pid', None)
         if pid is not None:
             parts.append(f'PID: 0x{pid:04X}')
+        serial = getattr(port, 'serial_number', None)
+        if serial and serial.strip().lower() != 'n/a':
+            parts.append(f'SN: {serial}')
         return ', '.join(parts)
 
     def shell_complete(
