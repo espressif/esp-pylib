@@ -45,10 +45,10 @@ Extras combine: `esp-pylib[ide,serial,cli]>=X.Y.Z`. Bump the pin again whenever 
 
 ```python
 from esp_pylib.constants import (
-    ESPRESSIF_VID,                  # 0x303A
-    USB_JTAG_SERIAL_PID,            # 0x1001
-    ESP_ROM_BAUD,                   # 115200
-    HARDWARE_FLOW_CONTROL_VID_PIDS, # adapters whose CTS is tied to chip-RTS
+    ESPRESSIF_VID,  # 0x303A
+    USB_JTAG_SERIAL_PID,  # 0x1001
+    ESP_ROM_BAUD,  # 115200
+    HARDWARE_FLOW_CONTROL_VID_PIDS,  # adapters whose CTS is tied to chip-RTS
     MACOS_PORT_EXCLUDE_LIST,
     LINUX_DEVICE_PATTERNS,
     MACOS_DEVICE_PATTERNS,
@@ -77,6 +77,7 @@ Tool-specific error subclasses stay local but should extend `esp_pylib.errors.Fa
 ```python
 from esp_pylib.errors import FatalError
 
+
 class MyToolLoaderError(FatalError):
     def __init__(self, message, extra_output=None):
         super().__init__(message)
@@ -94,11 +95,17 @@ Use the `log` proxy from `esp_pylib.logger` — it always delegates to the curre
 ```python
 # Before
 from .output_helpers import red_print, yellow_print, note_print
-red_print("Something failed"); yellow_print("Watch out"); note_print("FYI")
+
+red_print('Something failed')
+yellow_print('Watch out')
+note_print('FYI')
 
 # After
 from esp_pylib.logger import log
-log.err("Something failed"); log.warn("Watch out"); log.note("FYI")
+
+log.err('Something failed')
+log.warn('Watch out')
+log.note('FYI')
 ```
 
 For idf.py-style build hints (`yellow_print("HINT: …")` in `idf_py_actions/tools.py`) or component-manager hints (cyan `HINT:` on stdout), use `log.hint(message)` — same `HINT:` prefix on stdout, cyan instead of yellow so hints do not collide with `log.warn` on stderr (bold yellow). Tools that suppress hints via an env flag (e.g. component manager's `NO_HINTS`) should override `hint()` on an `EspLog` subclass and call `super().hint()` when enabled.
@@ -136,9 +143,9 @@ Delete the local `log.py`. If the previous `die()` used a non-1 exit code, pass 
 **D) Raw `print()` calls:**
 
 ```python
-print(error_msg, file=sys.stderr)   # → log.err(error_msg)        (diagnostic — gets ERROR: prefix + IDE forward)
-print(progress, file=sys.stderr)    # → log.print(progress, file=sys.stderr)  (non-diagnostic stderr)
-print(info_msg)                     # → log.print(info_msg)
+print(error_msg, file=sys.stderr)  # → log.err(error_msg)        (diagnostic — gets ERROR: prefix + IDE forward)
+print(progress, file=sys.stderr)  # → log.print(progress, file=sys.stderr)  (non-diagnostic stderr)
+print(info_msg)  # → log.print(info_msg)
 ```
 
 Use `log.err` only for real error diagnostics — it adds `ERROR:` and forwards to the IDE WebSocket. Reserve plain `print()` only for primary data output that is not a diagnostic (e.g. final report bytes piped to stdout, GDB backtrace text for another process).
@@ -192,6 +199,7 @@ Subclass `EspLog` only when you need to restyle progress bars or change stage be
 ```python
 from esp_pylib.logger import EspLog
 
+
 class MyToolLogger(EspLog):
     def progress_bar(self, cur_iter, total_iters, prefix='', suffix='', bar_length=30): ...  # optional restyle
 ```
@@ -224,11 +232,11 @@ config = ToolConfig(
     config_filenames=['mytool.cfg', 'setup.cfg', 'tox.ini'],
     env_var='MYTOOL_CFGFILE',
     valid_options=['timeout', 'connect_attempts', 'reset_delay'],  # turns INI typos into warnings
-    permissive_env_var=True,    # tool reads config at import time; bad env-var path must not crash startup
-    verbose=True,               # emit "Loaded custom configuration from ..." + unknown-option warnings
-    logger=mytool_log,          # optional; defaults to esp_pylib.logger.log (the global proxy)
+    permissive_env_var=True,  # tool reads config at import time; bad env-var path must not crash startup
+    verbose=True,  # emit "Loaded custom configuration from ..." + unknown-option warnings
+    logger=mytool_log,  # optional; defaults to esp_pylib.logger.log (the global proxy)
 )
-parser, path = config.load()    # parser always has [mytool] section; path is None when no file found
+parser, path = config.load()  # parser always has [mytool] section; path is None when no file found
 timeout = config.get('timeout', fallback='10')
 ```
 
@@ -277,11 +285,11 @@ from esp_pylib.rom import get_idf_path, get_rom_elf_dir, get_roms_json_paths
 
 ```python
 from esp_pylib.serial_ports import (
-    detect_port,        # str — best candidate or NoSerialPortFoundError
-    get_port_list,      # list[ListPortInfo] — sorted, filtered
-    get_port_names,     # list[str]          — sorted, filtered (device paths)
-    get_port_vid_pid,   # (vid, pid) for a device path, or PortVidPidNotFoundError
-    parse_port_filters, # parse "vid=0x303A" / "pid=..." / "name=..." / "serial=..." into kwargs
+    detect_port,  # str — best candidate or NoSerialPortFoundError
+    get_port_list,  # list[ListPortInfo] — sorted, filtered
+    get_port_names,  # list[str]          — sorted, filtered (device paths)
+    get_port_vid_pid,  # (vid, pid) for a device path, or PortVidPidNotFoundError
+    parse_port_filters,  # parse "vid=0x303A" / "pid=..." / "name=..." / "serial=..." into kwargs
 )
 
 ports = get_port_list(vids=[0x303A])
@@ -314,8 +322,11 @@ For tools whose existing public API returns plain device-path strings (not `List
 
 ```python
 from esp_pylib.serial_reset import (
-    classic_bootloader_reset, unix_tight_bootloader_reset,
-    usb_jtag_bootloader_reset, hard_reset, uses_hardware_flow_control,
+    classic_bootloader_reset,
+    unix_tight_bootloader_reset,
+    usb_jtag_bootloader_reset,
+    hard_reset,
+    uses_hardware_flow_control,
 )
 from esp_pylib.serial_ports import get_port_vid_pid
 from esp_pylib.errors import PortVidPidNotFoundError
@@ -334,7 +345,7 @@ Pass per-chip timings from the tool's existing config table (`chip_config['enter
 ```python
 from esp_pylib.serial_reset import parse_custom_reset_sequence, execute_custom_reset
 
-execute_custom_reset(port, 'D0|R1|W0.1|D1|R0')          # parse + run in one call
+execute_custom_reset(port, 'D0|R1|W0.1|D1|R0')  # parse + run in one call
 steps = parse_custom_reset_sequence('D0|R1|U1,0|W0.1')  # list[dict] for custom orchestration
 ```
 
@@ -345,10 +356,10 @@ steps = parse_custom_reset_sequence('D0|R1|U1,0|W0.1')  # list[dict] for custom 
 ```python
 from esp_pylib.ws import send_event, wait_for_event, set_ws_url, is_enabled, close, ensure_connected
 
-set_ws_url(args.ws)         # optional — pass None to fall back to ESP_IDE_WS
+set_ws_url(args.ws)  # optional — pass None to fall back to ESP_IDE_WS
 send_event('gdb_stub', port=port, prog=prog)
 wait_for_event('debug_finished')
-close()                     # on clean shutdown
+close()  # on clean shutdown
 ```
 
 Use `is_enabled()` to gate work on whether an IDE link is configured — it's the same cached probe `EspLog.warn` / `err` use internally. To fail fast when an IDE URL is set but unreachable (rather than degrading silently), call `ensure_connected()` once at startup — it raises `FatalError` with distinct messages for "URL unset", "websockets missing", "all retries failed".
@@ -372,6 +383,7 @@ Convert every entry point built with `argparse.ArgumentParser`, `add_argument`, 
 ```python
 # Before (argparse)
 import argparse
+
 parser = argparse.ArgumentParser(prog='mytool')
 parser.add_argument('--port', '-p', default=os.environ.get('MYTOOL_PORT'))
 parser.add_argument('--quiet', '-q', action='store_true')
@@ -385,6 +397,7 @@ import os
 import rich_click as click
 from esp_pylib.cli_types import SerialPortType
 
+
 @click.group()
 @click.option('--port', '-p', type=SerialPortType(), default=lambda: os.environ.get('MYTOOL_PORT'))
 @click.option('--quiet', '-q', is_flag=True, default=False)
@@ -393,6 +406,7 @@ def cli(ctx, port, quiet):
     ctx.ensure_object(dict)
     ctx.obj['port'] = port
     ctx.obj['quiet'] = quiet
+
 
 @cli.command('info')
 @click.argument('corefile')
@@ -450,6 +464,7 @@ from esp_pylib.cli_types import (
     SerialPortType,
 )
 
+
 @click.option('--port', '-p', type=SerialPortType(), help='Serial port device')
 @click.option('--baud', type=BaudRateType(), default=115200)
 @click.option('--offset', type=AnyIntType())
@@ -470,6 +485,7 @@ Requires `esp-pylib[cli]`. Replace tool-local copies of these classes; wire each
 ```python
 import rich_click as click
 from esp_pylib.cli_options import MutuallyExclusiveOption
+
 
 @click.command()
 @click.option(
@@ -493,9 +509,12 @@ def cmd(compress, no_compress): ...
 ```python
 from esp_pylib.cli_options import OptionEatAll
 
+
 @click.option('--port-filter', multiple=True, type=str, cls=OptionEatAll)
 @click.option('--verbose', is_flag=True)
 def cmd(port_filter, verbose): ...
+
+
 # mytool --port-filter vid=0x303A name=USB --verbose
 # → port_filter == ('vid=0x303A', 'name=USB')  # with multiple=True
 ```
@@ -508,9 +527,11 @@ Without `multiple=True`, `OptionEatAll` passes the full eaten token list to `typ
 import rich_click as click
 from esp_pylib.cli_options import EspRichGroup, OptionEatAll
 
+
 @click.group(cls=EspRichGroup)
 @click.option('--port-filter', multiple=True, type=str, cls=OptionEatAll)
 def cli(port_filter): ...
+
 
 @cli.command()
 def flash(): ...
@@ -598,11 +619,11 @@ After Step 5, `log.err`, `log.warn`, `log.note`, `log.hint`, and related helpers
 
 ```python
 # Avoid — prefix/format may change with esp-pylib updates
-assert "HINT: some text" in captured.stdout
-assert captured.stderr.startswith("WARNING:")
+assert 'HINT: some text' in captured.stdout
+assert captured.stderr.startswith('WARNING:')
 
 # Prefer — assert on the message body the tool controls
-assert "some text" in captured.stdout
+assert 'some text' in captured.stdout
 # Or mock/stub EspLog and assert log.hint was called with the expected message
 ```
 
@@ -650,15 +671,24 @@ The shared library returns canonical types (e.g. `list[ListPortInfo]`, `(ConfigP
 from esp_pylib.serial_ports import get_port_list as _pylib_get_port_list
 from esp_pylib.serial_ports import parse_port_filters as _pylib_parse_port_filters
 
+
 def get_port_list(vids=None, pids=None, names=None, serials=None):
-    return [p.device for p in _pylib_get_port_list(
-        vids=vids, pids=pids, names=names, serials=serials,
-    )]
+    return [
+        p.device
+        for p in _pylib_get_port_list(
+            vids=vids,
+            pids=pids,
+            names=names,
+            serials=serials,
+        )
+    ]
+
 
 def parse_port_filters(values):
     # Previous return shape was a 4-tuple; the shared helper returns a dict.
     f = _pylib_parse_port_filters(values)
     return f['vids'], f['pids'], f['names'], f['serials']
+
 
 # Tool's public API kept unchanged — hides the ToolConfig instance behind the old function name.
 from esp_pylib.config import ToolConfig
@@ -668,6 +698,7 @@ _CONFIG = ToolConfig(
     config_filenames=['mytool.cfg', 'setup.cfg', 'tox.ini'],
     env_var='MYTOOL_CFGFILE',
 )
+
 
 def load_config_file(verbose=False):
     return _CONFIG.load()  # (ConfigParser, Optional[Path]) — same shape as before

@@ -42,8 +42,8 @@ from esp_pylib.logger import log
 log.print('Plain output to stdout')
 log.note('Informational note')
 log.hint('Actionable hint on how to proceed')
-log.warn('Something looks off')          # stderr
-log.err('Something failed')              # stderr
+log.warn('Something looks off')  # stderr
+log.err('Something failed')  # stderr
 log.debug('Only shown in verbose mode')  # stdout, verbose only
 ```
 
@@ -241,16 +241,16 @@ class MyLogger(EspLogBase):
         print(*args, **kwargs)
 
     def err(self, *args, suggestion=None):
-        print("ERROR:", *args, file=sys.stderr)
+        print('ERROR:', *args, file=sys.stderr)
 
     def warn(self, *args, suggestion=None):
-        print("WARNING:", *args, file=sys.stderr)
+        print('WARNING:', *args, file=sys.stderr)
 
     def note(self, *args):
-        print("NOTE:", *args)
+        print('NOTE:', *args)
 
     def hint(self, *args):
-        print("HINT:", *args)
+        print('HINT:', *args)
 
     def debug(self, *args):
         if self._verbosity == Verbosity.VERBOSE:
