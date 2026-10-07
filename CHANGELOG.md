@@ -1,3 +1,10 @@
+## v1.2.0 (2026-10-06)
+
+### ✨ New Features
+
+- **cli**: Add serial number to port completion help *(Peter Dragun - 97647a4)*
+
+
 ## v1.1.5 (2026-09-09)
 
 ### 🐛 Bug Fixes
