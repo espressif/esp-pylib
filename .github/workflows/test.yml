@@ -11,7 +11,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ['3.7', '3.14']
+        python-version: ['3.7', '3.15']
     steps:
       - name: Checkout ref commit
         uses: actions/checkout@v6
