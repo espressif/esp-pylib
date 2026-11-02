@@ -1,3 +1,11 @@
+## v1.2.1 (2026-11-02)
+
+### 🐛 Bug Fixes
+
+- Declare the license without deprecated metadata *(Peter Dragun - e6e0fc0)*
+- Add Python 3.15 support *(Roland Dobai - 5d09311)*
+
+
 ## v1.2.0 (2026-10-06)
 
 ### ✨ New Features
