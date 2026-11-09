@@ -1,17 +1,23 @@
 # SPDX-FileCopyrightText: 2026 Espressif Systems (Shanghai) CO LTD
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for esp_pylib.ws (IDE WebSocket) and esp_pylib.excepthook."""
+"""Tests for esp_pylib.ws (IDE WebSocket), esp_pylib.excepthook, and the IDE WebSocket JSON Schema."""
 
 import json
 import sys
 import threading
+from io import StringIO
+from pathlib import Path
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
+import jsonschema
 import pytest
 
 import esp_pylib.ws as ws
 from esp_pylib.errors import FatalError
+from esp_pylib.logger import EspLog
+
+SCHEMA_PATH = Path(__file__).resolve().parents[1] / 'schemas' / 'ide_websocket' / 'v1.json'
 
 
 def _reset_ws_state() -> None:
@@ -50,6 +56,35 @@ def restore_hooks():
     # (py37-drop): the `hasattr` guard exists only for Python 3.7; drop it once 3.8+ is required.
     if hasattr(threading, 'excepthook') and old_thread is not None:
         threading.excepthook = old_thread
+
+
+@pytest.fixture(scope='module')
+def schema():
+    loaded = json.loads(SCHEMA_PATH.read_text(encoding='utf-8'))
+    jsonschema.Draft7Validator.check_schema(loaded)
+    return loaded
+
+
+@pytest.fixture(scope='module')
+def validator(schema):
+    return jsonschema.Draft7Validator(schema)
+
+
+@pytest.fixture
+def sent_payloads(monkeypatch):
+    """Return a callable that lists the JSON payloads sent over a mocked IDE connection."""
+    monkeypatch.setenv('ESP_IDE_WS', 'ws://localhost:9')
+    conn = MagicMock()
+    with patch('esp_pylib.ws._ensure_connection', return_value=conn):
+        yield lambda: [json.loads(call[0][0]) for call in conn.send.call_args_list]
+
+
+@pytest.fixture
+def reset_logger():
+    """Give the test a fresh logger singleton and drop it afterwards so later tests don't inherit it."""
+    EspLog._reset()
+    yield
+    EspLog._reset()
 
 
 class TestWsUrl:
@@ -503,3 +538,95 @@ class TestExcepthook:
         assert len(sent) == 1
         assert sent[0][0] == 'exception'
         assert 'thread err' in sent[0][1]
+
+
+class TestSchema:
+    """The JSON Schema accepts the protocol messages and rejects malformed ones."""
+
+    def test_examples_are_valid(self, validator, schema):
+        for example in schema['examples']:
+            validator.validate(example)
+
+    @pytest.mark.parametrize(
+        'instance',
+        [
+            {
+                'type': 'warning',
+                'file': '<unknown>',
+                'line': 0,
+                'message': '',
+                'suggestion': None,
+            },
+            {
+                'type': 'error',
+                'file': '/src/x.py',
+                'line': 7,
+                'message': 'bad',
+                'suggestion': 'fix it',
+            },
+            {
+                'type': 'event',
+                'event': 'gdb_stub',
+                'port': '/dev/ttyUSB0',
+                'prog': '/b.elf',
+            },
+            {'event': 'debug_finished'},
+            {'type': 'event', 'event': 'flash_finished', 'success': True},
+        ],
+    )
+    def test_accepts_protocol_messages(self, validator, instance):
+        validator.validate(instance)
+
+    @pytest.mark.parametrize(
+        'instance',
+        [
+            {'type': 'hint', 'file': 'f.py', 'line': 1, 'message': 'n', 'suggestion': None},
+            {'type': 'error', 'file': 'f.py', 'line': 1, 'message': 'e', 'suggestion': None, 'extra': 1},
+            {'type': 'error', 'file': 'f.py', 'line': -1, 'message': 'e', 'suggestion': None},
+            {'type': 'error', 'file': 'f.py', 'message': 'e', 'suggestion': None},
+            {'type': 'event'},
+            {'type': 'event', 'event': ''},
+            {'type': 'nope', 'event': 'debug_finished'},
+            [],
+            'not-an-object',
+        ],
+    )
+    def test_rejects_malformed_messages(self, validator, instance):
+        assert not validator.is_valid(instance)
+
+
+class TestPayloadsMatchSchema:
+    """What esp_pylib actually sends to the IDE is valid against the JSON Schema."""
+
+    @pytest.mark.parametrize('suggestion', [None, 'fix it'])
+    def test_log_warn_and_err(self, validator, sent_payloads, reset_logger, suggestion):
+        with patch('sys.stderr', StringIO()):
+            logger = EspLog()
+            logger.warn('careful', suggestion=suggestion)
+            logger.err('bad', suggestion=suggestion)
+
+        payloads = sent_payloads()
+        assert [p['type'] for p in payloads] == ['warning', 'error']
+        for payload in payloads:
+            validator.validate(payload)
+
+    def test_excepthook(self, validator, sent_payloads):
+        from esp_pylib import excepthook as eh
+
+        with patch('sys.stderr', StringIO()):
+            try:
+                raise ValueError('boom')
+            except ValueError:
+                eh._sys_excepthook(*sys.exc_info())
+            eh._sys_excepthook(RuntimeError, RuntimeError(), None)
+
+        payloads = sent_payloads()
+        assert [p['suggestion'] is None for p in payloads] == [False, True]
+        for payload in payloads:
+            validator.validate(payload)
+
+    def test_send_event(self, validator, sent_payloads):
+        ws.send_event('gdb_stub', port='/dev/ttyUSB0', prog='/b.elf')
+
+        (payload,) = sent_payloads()
+        validator.validate(payload)

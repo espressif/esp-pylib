@@ -1,0 +1,87 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://raw.githubusercontent.com/espressif/esp-pylib/master/schemas/ide_websocket/v1.json",
+  "title": "ESP IDE WebSocket message",
+  "description": "Each WebSocket text message carries one JSON object. The IDE sets ESP_IDE_WS to the socket URL. A tool may set its own URL instead, such as esp-idf-monitor --ws. A diagnostic comes from any tool. Its type is \"warning\", \"error\", or \"exception\". An event comes from esp-idf-monitor. Its type is \"event\". The IDE replies with an event name such as \"debug_finished\". That reply can leave type out. Monitor checks the event name only. If the reply includes type, it must be \"event\".",
+  "oneOf": [
+    {
+      "$ref": "#/definitions/diagnostic"
+    },
+    {
+      "$ref": "#/definitions/event"
+    }
+  ],
+  "definitions": {
+    "diagnostic": {
+      "type": "object",
+      "description": "Structured warning, error, or uncaught exception, sent by the tool. Hints, notes, and progress are not sent.",
+      "additionalProperties": false,
+      "required": ["type", "file", "line", "message", "suggestion"],
+      "properties": {
+        "type": {
+          "enum": ["warning", "error", "exception"],
+          "description": "warning and error use the same text as the console line, without the WARNING: or ERROR: prefix. exception is an uncaught crash. SystemExit and KeyboardInterrupt are not reported."
+        },
+        "file": {
+          "type": "string",
+          "description": "Python file that logged the message, or where the exception was raised. \"<unknown>\" if the file is not known. This is usually a file inside the tool, not the user's project."
+        },
+        "line": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Line number in file. The first line is 1. Use 0 if the line is not known."
+        },
+        "message": {
+          "type": "string",
+          "description": "Text to show the user. For exception, the exception text (which may be empty)."
+        },
+        "suggestion": {
+          "type": ["string", "null"],
+          "description": "Extra help text. It is not printed in the terminal. For a crash, this is the traceback, or null if there is none. For a warning or error, this is null unless the tool added a suggested fix."
+        }
+      }
+    },
+    "event": {
+      "type": "object",
+      "description": "A debug message between a tool and the IDE. Extra fields depend on the event name. esp-idf-monitor sends gdb_stub (port, prog), coredump (file, prog), and flash (port, target, full). It then waits for debug_finished or flash_finished. flash_finished may include success as true or false. Other event names are allowed.",
+      "additionalProperties": true,
+      "required": ["event"],
+      "properties": {
+        "type": {
+          "const": "event",
+          "description": "Always present on events sent through esp-pylib. An IDE reply can leave it out. Legacy clients that do not use esp-pylib can also leave it out, so identify an event by its event field."
+        },
+        "event": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Name of the event. The other side waits for this name."
+        }
+      }
+    }
+  },
+  "examples": [
+    {
+      "type": "error",
+      "file": "/path/to/esptool/esptool/__init__.py",
+      "line": 1374,
+      "message": "A fatal error occurred: Failed to connect to Espressif device: No serial data received.",
+      "suggestion": null
+    },
+    {
+      "type": "exception",
+      "file": "/path/to/tool/main.py",
+      "line": 42,
+      "message": "division by zero",
+      "suggestion": "Traceback (most recent call last):\n  File \"main.py\", line 42, in <module>\nZeroDivisionError: division by zero"
+    },
+    {
+      "type": "event",
+      "event": "gdb_stub",
+      "port": "/dev/ttyUSB0",
+      "prog": "/path/to/build/app.elf"
+    },
+    {
+      "event": "debug_finished"
+    }
+  ]
+}

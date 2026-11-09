@@ -73,6 +73,7 @@ cli = [
 ]
 test = [
   "pytest",
+  "jsonschema>=4.0",
 ]
 
 [tool.ruff]
