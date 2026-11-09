@@ -20,7 +20,7 @@
       "properties": {
         "type": {
           "enum": ["warning", "error", "exception"],
-          "description": "warning and error use the same text as the console line, without the WARNING: or ERROR: prefix. exception is an uncaught crash. SystemExit and KeyboardInterrupt are not reported."
+          "description": "warning and error carry the console line as plain text, with Rich markup removed and without the WARNING: or ERROR: prefix. exception is an uncaught crash. SystemExit and KeyboardInterrupt are not reported."
         },
         "file": {
           "type": "string",

@@ -144,7 +144,7 @@ Espressif IDEs can launch tools with a WebSocket URL so errors, warnings, and ex
 }
 ```
 
-The normative schema for this object and for event messages is [`schemas/ide_websocket/v1.json`](./schemas/ide_websocket/v1.json). Receivers must ignore keys they do not know. A published schema version only changes in ways such receivers can ignore: new optional keys, and clearer descriptions and examples. Removing or renaming a key, making it required, or changing its type or meaning goes into a new file (e.g. `v2.json`), and older versions stay available.
+For `warning` and `error`, `message` is the console text without the prefix and with Rich markup removed. The normative schema for this object and for event messages is [`schemas/ide_websocket/v1.json`](./schemas/ide_websocket/v1.json). Receivers must ignore keys they do not know. A published schema version only changes in ways such receivers can ignore: new optional keys, and clearer descriptions and examples. Removing or renaming a key, making it required, or changing its type or meaning goes into a new file (e.g. `v2.json`), and older versions stay available.
 
 #### Uncaught exceptions
 
