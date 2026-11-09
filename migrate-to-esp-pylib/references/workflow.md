@@ -220,6 +220,8 @@ install_exception_reporting()
 
 It chains to the previous `sys.excepthook` / `threading.excepthook`, filters `SystemExit` / `KeyboardInterrupt`, and is safe to call multiple times. The `sys.excepthook` is always installed (so chaining to a previously installed hook keeps working); the `threading.excepthook` integration is skipped on Python 3.7 because that hook only exists in 3.8+. IDE *delivery* additionally requires the `[ide]` extra (`websockets`) and `ESP_IDE_WS` to be set — without them, `send_log_message` silently no-ops while the hooks still chain normally.
 
+Diagnostic and event messages are specified in [`schemas/ide_websocket/v1.json`](https://github.com/espressif/esp-pylib/blob/master/schemas/ide_websocket/v1.json).
+
 ### Step 7: Replace config loader
 
 `ToolConfig` finds, parses, validates, and caches an INI-style config file (pure stdlib, no extras).
@@ -366,7 +368,7 @@ Use `is_enabled()` to gate work on whether an IDE link is configured — it's th
 
 Delete the local WebSocket client module. In `pyproject.toml`, remove any `websocket-client` dep and add `esp-pylib[ide]` (pulls `websockets`).
 
-Wire format is `{"type": "event", "event": "<name>", ...}`. If the previous client passed list-typed values for fields the new format expects as strings (e.g. `prog`), unpack to one string.
+Wire format is specified in [`schemas/ide_websocket/v1.json`](https://github.com/espressif/esp-pylib/blob/master/schemas/ide_websocket/v1.json). An event message is `{"type": "event", "event": "<name>", ...}`. If the previous client passed list-typed values for fields the new format expects as strings (e.g. `prog`), unpack to one string.
 
 ### Step 12: Convert CLI to rich-click
 

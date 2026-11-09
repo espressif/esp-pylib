@@ -3,6 +3,9 @@
 """
 WebSocket client: send structured log messages to an IDE when ESP_IDE_WS is set.
 Silently does nothing when the env var is unset, websockets is not installed, or the connection fails.
+
+Messages follow the JSON Schema at
+https://github.com/espressif/esp-pylib/blob/master/schemas/ide_websocket/v1.json.
 """
 
 from __future__ import annotations
