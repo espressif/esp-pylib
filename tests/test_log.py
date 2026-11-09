@@ -13,6 +13,7 @@ from unittest.mock import patch
 
 import pytest
 from rich.console import Console
+from rich.markup import escape
 
 from esp_pylib.logger import EspLog
 from esp_pylib.logger import EspLogBase
@@ -446,6 +447,22 @@ class TestCallSiteReporting:
         assert 'WARNING:' not in err.getvalue()
         mock_send.assert_called_once()
         assert mock_send.call_args[0][1] == 'quiet warning'
+
+    def test_ide_message_strips_rich_markup(self):
+        """The IDE gets the console text: markup tags and ``escape()`` backslashes are removed.
+
+        Invalid markup is sent unchanged; silent mode keeps the console from raising on it.
+        """
+        EspLog._reset()
+        with patch('esp_pylib.logger._ws_is_enabled', return_value=True), patch(
+            'esp_pylib.logger.send_log_message'
+        ) as mock_send:
+            logger = EspLog()
+            logger.set_verbosity(Verbosity.SILENT)
+            logger.warn('[bold]Failed[/bold] at', escape('data[key]'), ':CD:')
+            logger.warn('stray [/bold] tag')
+        messages = [call[0][1] for call in mock_send.call_args_list]
+        assert messages == ['Failed at data[key] :CD:', 'stray [/bold] tag']
 
 
 class TestSkipCallSiteWhenIdeDisabled:
