@@ -110,7 +110,7 @@ log.note('FYI')
 
 For idf.py-style build hints (`yellow_print("HINT: …")` in `idf_py_actions/tools.py`) or component-manager hints (cyan `HINT:` on stdout), use `log.hint(message)` — same `HINT:` prefix on stdout, cyan instead of yellow so hints do not collide with `log.warn` on stderr (bold yellow). Tools that suppress hints via an env flag (e.g. component manager's `NO_HINTS`) should override `hint()` on an `EspLog` subclass and call `super().hint()` when enabled.
 
-`log.print` / `err` / `warn` / `note` / `hint` / `debug` render the message as Rich markup and do **not** escape it, so callers can style parts of the text (`log.note('Wrote [bold]flash[/bold]')`). When migrating a call whose message embeds dynamic text that may contain `[` / `]` (file paths, identifiers, regexes), wrap that text with `rich.markup.escape(...)` to avoid mis-rendering or markup parse errors.
+`log.print` / `err` / `warn` / `note` / `hint` / `debug` render the message as Rich markup and do **not** escape it, so callers can style parts of the text (`log.note('Wrote [bold]flash[/bold]')`). When migrating a call whose message embeds dynamic text that may contain `[` / `]` (file paths, identifiers, regexes), wrap that text with `rich.markup.escape(...)` to avoid mis-rendering or markup parse errors. `warn` / `err` send the IDE WebSocket the same text with the markup removed.
 
 If the tool must keep stdout reserved for machine-readable output (e.g. a tool that emits structured data such as JSON on stdout), call `log.set_info_stream(sys.stderr)` once at startup so `note` / `hint` / `debug` go to stderr alongside `err` / `warn` (pass `None` to restore the stdout default). This is a logger-level switch, so the `note` / `hint` / `debug` method signatures stay frozen — don't add a `file=` parameter to them (it would break custom loggers built from the `EspLogBase` template). The stream is captured at call time and is not updated if `sys.stderr` is later reassigned; call `set_info_stream` before any redirection.
 
@@ -219,6 +219,8 @@ install_exception_reporting()
 ```
 
 It chains to the previous `sys.excepthook` / `threading.excepthook`, filters `SystemExit` / `KeyboardInterrupt`, and is safe to call multiple times. The `sys.excepthook` is always installed (so chaining to a previously installed hook keeps working); the `threading.excepthook` integration is skipped on Python 3.7 because that hook only exists in 3.8+. IDE *delivery* additionally requires the `[ide]` extra (`websockets`) and `ESP_IDE_WS` to be set — without them, `send_log_message` silently no-ops while the hooks still chain normally.
+
+Diagnostic and event messages are specified in [`schemas/ide_websocket/v1.json`](https://github.com/espressif/esp-pylib/blob/master/schemas/ide_websocket/v1.json).
 
 ### Step 7: Replace config loader
 
@@ -366,7 +368,7 @@ Use `is_enabled()` to gate work on whether an IDE link is configured — it's th
 
 Delete the local WebSocket client module. In `pyproject.toml`, remove any `websocket-client` dep and add `esp-pylib[ide]` (pulls `websockets`).
 
-Wire format is `{"type": "event", "event": "<name>", ...}`. If the previous client passed list-typed values for fields the new format expects as strings (e.g. `prog`), unpack to one string.
+Wire format is specified in [`schemas/ide_websocket/v1.json`](https://github.com/espressif/esp-pylib/blob/master/schemas/ide_websocket/v1.json). An event message is `{"type": "event", "event": "<name>", ...}`. If the previous client passed list-typed values for fields the new format expects as strings (e.g. `prog`), unpack to one string.
 
 ### Step 12: Convert CLI to rich-click
 

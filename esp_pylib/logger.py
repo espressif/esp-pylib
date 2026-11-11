@@ -30,7 +30,9 @@ from typing import NoReturn
 from rich.console import Console
 from rich.control import Control
 from rich.control import ControlType
+from rich.errors import MarkupError
 from rich.progress_bar import ProgressBar
+from rich.text import Text
 
 from esp_pylib.ws import is_enabled as _ws_is_enabled
 from esp_pylib.ws import send_log_message
@@ -257,15 +259,30 @@ class Verbosity(metaclass=VerbosityMeta):
     VERBOSE = 2
 
 
+def _plain_text(arg: Any) -> str:
+    """Return the text the console shows for one log argument, without styling.
+
+    String arguments are Rich markup on the console, so strip it the same way
+    (``emoji=False`` like the logger's consoles). Invalid markup is returned
+    unchanged: the console would raise on it, but in silent mode only the
+    websocket path sees it and must not crash the tool.
+    """
+    if not isinstance(arg, str):
+        return str(arg)
+    try:
+        return str(Text.from_markup(arg, emoji=False))
+    except MarkupError:
+        return arg
+
+
 def _render_message(args: tuple[Any, ...]) -> str:
-    """Flatten variadic log args into a single string for the IDE websocket.
+    """Flatten variadic log args into a single plain-text string for the IDE websocket.
 
     The console path renders each argument through Rich, but the websocket
     transport only carries a plain ``message`` string, so join the arguments'
-    ``str()`` forms. For the common single-argument call this is just that
-    argument unchanged.
+    plain-text forms.
     """
-    return ' '.join(str(a) for a in args)
+    return ' '.join(_plain_text(a) for a in args)
 
 
 class EspLogBase(ABC):
@@ -445,7 +462,8 @@ class EspLog(EspLogBase):
     it, so callers can style parts of the text (e.g.
     ``log.note('Wrote [bold]flash[/bold]')``). Callers passing dynamic/untrusted
     text that may contain ``[`` / ``]`` (paths, identifiers, regexes) must escape
-    it themselves via `rich.markup.escape`.
+    it themselves via `rich.markup.escape`. ``warn`` / ``err`` send the IDE
+    websocket the same text with the markup removed.
 
     Subclassing note: tools such as esptool extend ``EspLog`` with extra helpers
     while keeping ``EspLogBase`` compatibility. Inherited class attributes are
