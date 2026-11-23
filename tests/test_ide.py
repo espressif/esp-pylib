@@ -1,17 +1,26 @@
 # SPDX-FileCopyrightText: 2026 Espressif Systems (Shanghai) CO LTD
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for esp_pylib.ws (IDE WebSocket) and esp_pylib.excepthook."""
+"""Tests for esp_pylib.ws (IDE WebSocket), esp_pylib.excepthook, and the IDE WebSocket JSON Schema."""
 
 import json
+import os
+import subprocess
 import sys
 import threading
+from io import StringIO
+from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
+import jsonschema
 import pytest
 
 import esp_pylib.ws as ws
 from esp_pylib.errors import FatalError
+from esp_pylib.logger import EspLog
+
+SCHEMA_PATH = Path(__file__).resolve().parents[1] / 'schemas' / 'ide_websocket' / 'v1.json'
 
 
 def _reset_ws_state() -> None:
@@ -31,6 +40,8 @@ def _reset_ws_state() -> None:
                 pass
             ws._connection = None
         ws._ws_url = ws._URL_UNREAD  # type: ignore[assignment]
+    ws._source = ws._SOURCE_UNREAD  # type: ignore[assignment]
+    ws._parent_pids = []
 
 
 @pytest.fixture(autouse=True)
@@ -50,6 +61,51 @@ def restore_hooks():
     # (py37-drop): the `hasattr` guard exists only for Python 3.7; drop it once 3.8+ is required.
     if hasattr(threading, 'excepthook') and old_thread is not None:
         threading.excepthook = old_thread
+
+
+@pytest.fixture(scope='module')
+def schema():
+    loaded = json.loads(SCHEMA_PATH.read_text(encoding='utf-8'))
+    jsonschema.Draft7Validator.check_schema(loaded)
+    return loaded
+
+
+@pytest.fixture(scope='module')
+def validator(schema):
+    return jsonschema.Draft7Validator(schema)
+
+
+@pytest.fixture(scope='module')
+def check_diagnostic(schema, validator):
+    """Return a callable that validates a diagnostic payload and requires every key to be in the schema.
+
+    The schema lets receivers ignore unknown keys, so only this check stops esp-pylib from
+    sending keys the schema does not document.
+    """
+    documented = set(schema['definitions']['diagnostic']['properties'])
+
+    def check(payload):
+        validator.validate(payload)
+        assert set(payload) <= documented
+
+    return check
+
+
+@pytest.fixture
+def sent_payloads(monkeypatch):
+    """Return a callable that lists the JSON payloads sent over a mocked IDE connection."""
+    monkeypatch.setenv('ESP_IDE_WS', 'ws://localhost:9')
+    conn = MagicMock()
+    with patch('esp_pylib.ws._ensure_connection', return_value=conn):
+        yield lambda: [json.loads(call[0][0]) for call in conn.send.call_args_list]
+
+
+@pytest.fixture
+def reset_logger():
+    """Give the test a fresh logger singleton and drop it afterwards so later tests don't inherit it."""
+    EspLog._reset()
+    yield
+    EspLog._reset()
 
 
 class TestWsUrl:
@@ -187,16 +243,21 @@ class TestSendLogMessage:
     @patch('esp_pylib.ws._ensure_connection')
     def test_sends_json_payload(self, mock_ensure, monkeypatch):
         monkeypatch.setenv('ESP_IDE_WS', 'ws://localhost:9')
+        monkeypatch.setattr(ws, '_parent_pids', [100])
         mock_conn = MagicMock()
         mock_ensure.return_value = mock_conn
 
-        ws.send_log_message('error', 'bad', 'fix it', '/src/x.py', 7)
+        with patch('esp_pylib.ws._detect_source', return_value='esptool'):
+            ws.send_log_message('error', 'bad', 'fix it', '/src/x.py', 7)
 
         mock_ensure.assert_called()
         mock_conn.send.assert_called_once()
         payload = json.loads(mock_conn.send.call_args[0][0])
         assert payload == {
             'type': 'error',
+            'source': 'esptool',
+            'pid': os.getpid(),
+            'parent_pids': [100],
             'file': '/src/x.py',
             'line': 7,
             'message': 'bad',
@@ -503,3 +564,214 @@ class TestExcepthook:
         assert len(sent) == 1
         assert sent[0][0] == 'exception'
         assert 'thread err' in sent[0][1]
+
+
+class TestSource:
+    @pytest.mark.parametrize(
+        'spec_name, argv, expected',
+        [
+            ('esptool.__main__', ['/venv/lib/esptool/__main__.py', 'flash-id'], 'esptool'),
+            ('esp_idf_monitor.__main__', ['/venv/lib/esp_idf_monitor/__main__.py'], 'esp-idf-monitor'),
+            ('espefuse', ['/venv/lib/espefuse/__init__.py'], 'espefuse'),
+            (None, ['/esp/esp-idf/tools/idf.py', 'flash'], 'idf.py'),
+            (None, ['/esp/esp-idf/components/partition_table/gen_esp32part.py'], 'gen_esp32part.py'),
+            (None, ['/venv/bin/espefuse', 'summary'], 'espefuse'),
+            (None, ['/dist/esptool.EXE'], 'esptool'),
+            (None, ['/venv/Scripts/esp-coredump-script.py'], 'esp-coredump'),
+            ('__main__', ['tool_dir/'], 'tool_dir'),
+            (None, ['-c'], None),
+            (None, [''], None),
+            (None, [], None),
+        ],
+    )
+    def test_detect(self, spec_name, argv, expected):
+        spec = SimpleNamespace(name=spec_name) if spec_name else None
+        with patch.dict(sys.modules, {'__main__': SimpleNamespace(__spec__=spec)}), patch.object(sys, 'argv', argv):
+            assert ws._detect_source() == expected
+
+    @pytest.mark.parametrize('as_module, expected', [(True, 'my-tool'), (False, 'cli.py')])
+    def test_detect_real_launch(self, tmp_path, as_module, expected):
+        """Check the real ``__main__`` spec of ``python -m`` and of a script on this interpreter."""
+        pkg = tmp_path / 'my_tool'
+        pkg.mkdir()
+        (pkg / '__init__.py').write_text('')
+        (pkg / 'cli.py').write_text('from esp_pylib.ws import _detect_source\nprint(_detect_source())\n')
+        cmd = [sys.executable, '-m', 'my_tool.cli'] if as_module else [sys.executable, str(pkg / 'cli.py')]
+        env = {**os.environ, 'PYTHONPATH': os.pathsep.join([str(tmp_path), *sys.path])}
+        out = subprocess.run(cmd, cwd=tmp_path, env=env, stdout=subprocess.PIPE, check=True).stdout
+        assert out.decode().strip() == expected
+
+    def test_detected_once(self):
+        with patch('esp_pylib.ws._detect_source', return_value='esptool') as mock_detect:
+            assert ws._get_source() == 'esptool'
+            assert ws._get_source() == 'esptool'
+        mock_detect.assert_called_once()
+
+
+class TestParentPids:
+    @pytest.fixture(autouse=True)
+    def clean_env(self, monkeypatch):
+        """Start without an inherited chain; monkeypatch also removes the one `_register_process` writes."""
+        monkeypatch.setenv(ws._PARENT_PIDS_ENV_VAR, '')
+        monkeypatch.delenv(ws._PARENT_PIDS_ENV_VAR)
+        monkeypatch.setenv('ESP_IDE_WS', 'ws://localhost:9')
+
+    def test_not_registered_without_ide(self, monkeypatch):
+        monkeypatch.delenv('ESP_IDE_WS')
+        ws._register_process()
+        assert ws._parent_pids == []
+        assert ws._PARENT_PIDS_ENV_VAR not in os.environ
+
+    @pytest.mark.parametrize(
+        'inherited, expected',
+        [
+            (None, []),
+            ('10,20', [10, 20]),
+            ('10,abc', []),
+            (f'10,{os.getpid()}', [10]),
+        ],
+        ids=['top-level', 'inherited', 'malformed', 're-registered'],
+    )
+    def test_register(self, monkeypatch, inherited, expected):
+        if inherited is not None:
+            monkeypatch.setenv(ws._PARENT_PIDS_ENV_VAR, inherited)
+        ws._register_process()
+        assert ws._parent_pids == expected
+        assert os.environ[ws._PARENT_PIDS_ENV_VAR] == ','.join(str(p) for p in [*expected, os.getpid()])
+
+    def test_real_process_chain(self, tmp_path):
+        """Three esp-pylib processes, each started through a plain Python process that is not listed."""
+        script = tmp_path / 'chain.py'
+        script.write_text(
+            'import json, os, subprocess, sys\n'
+            'import esp_pylib.ws as ws\n'
+            "out = [{'pid': os.getpid(), 'parent_pids': ws._parent_pids}]\n"
+            'if int(sys.argv[1]):\n'
+            "    relay = 'import subprocess, sys; sys.exit(subprocess.run(sys.argv[1:]).returncode)'\n"
+            '    cmd = [sys.executable, "-c", relay, sys.executable, __file__, str(int(sys.argv[1]) - 1)]\n'
+            '    out += json.loads(subprocess.run(cmd, stdout=subprocess.PIPE, check=True).stdout)\n'
+            'print(json.dumps(out))\n'
+        )
+        env = {**os.environ, 'PYTHONPATH': os.pathsep.join(sys.path)}
+        out = subprocess.run([sys.executable, str(script), '2'], env=env, stdout=subprocess.PIPE, check=True).stdout
+        top, child, grandchild = json.loads(out)
+        assert top['parent_pids'] == []
+        assert child['parent_pids'] == [top['pid']]
+        assert grandchild['parent_pids'] == [top['pid'], child['pid']]
+
+
+class TestSchema:
+    """The JSON Schema accepts the protocol messages and rejects malformed ones."""
+
+    def test_examples_are_valid(self, validator, schema):
+        for example in schema['examples']:
+            validator.validate(example)
+
+    @pytest.mark.parametrize(
+        'instance',
+        [
+            {
+                'type': 'warning',
+                'file': '<unknown>',
+                'line': 0,
+                'message': '',
+                'suggestion': None,
+            },
+            {'type': 'error', 'file': 'f.py', 'line': 1, 'message': 'e', 'suggestion': None, 'future_key': 1},
+            {
+                'type': 'error',
+                'file': '/src/x.py',
+                'line': 7,
+                'message': 'bad',
+                'suggestion': 'fix it',
+            },
+            {
+                'type': 'error',
+                'source': 'esptool',
+                'file': '/src/x.py',
+                'line': 7,
+                'message': 'bad',
+                'suggestion': None,
+            },
+            {'type': 'exception', 'source': None, 'file': '<unknown>', 'line': 0, 'message': '', 'suggestion': None},
+            {
+                'type': 'error',
+                'source': 'idf.py',
+                'pid': 4300,
+                'parent_pids': [],
+                'file': 'idf.py',
+                'line': 1,
+                'message': 'ninja failed',
+                'suggestion': None,
+            },
+            {
+                'type': 'event',
+                'event': 'gdb_stub',
+                'port': '/dev/ttyUSB0',
+                'prog': '/b.elf',
+            },
+            {'event': 'debug_finished'},
+            {'type': 'event', 'event': 'flash_finished', 'success': True},
+        ],
+    )
+    def test_accepts_protocol_messages(self, validator, instance):
+        validator.validate(instance)
+
+    @pytest.mark.parametrize(
+        'instance',
+        [
+            {'type': 'hint', 'file': 'f.py', 'line': 1, 'message': 'n', 'suggestion': None},
+            {'type': 'error', 'file': 'f.py', 'line': -1, 'message': 'e', 'suggestion': None},
+            {'type': 'error', 'file': 'f.py', 'message': 'e', 'suggestion': None},
+            {'type': 'error', 'source': '', 'file': 'f.py', 'line': 1, 'message': 'e', 'suggestion': None},
+            {'type': 'error', 'source': 1, 'file': 'f.py', 'line': 1, 'message': 'e', 'suggestion': None},
+            {'type': 'error', 'pid': 0, 'file': 'f.py', 'line': 1, 'message': 'e', 'suggestion': None},
+            {'type': 'error', 'pid': '1', 'file': 'f.py', 'line': 1, 'message': 'e', 'suggestion': None},
+            {'type': 'error', 'parent_pids': [0], 'file': 'f.py', 'line': 1, 'message': 'e', 'suggestion': None},
+            {'type': 'error', 'parent_pids': '1', 'file': 'f.py', 'line': 1, 'message': 'e', 'suggestion': None},
+            {'type': 'event'},
+            {'type': 'event', 'event': ''},
+            {'type': 'nope', 'event': 'debug_finished'},
+            [],
+            'not-an-object',
+        ],
+    )
+    def test_rejects_malformed_messages(self, validator, instance):
+        assert not validator.is_valid(instance)
+
+
+class TestPayloadsMatchSchema:
+    """What esp_pylib sends to the IDE is valid against the JSON Schema; diagnostics use only documented keys."""
+
+    @pytest.mark.parametrize('suggestion', [None, 'fix it'])
+    def test_log_warn_and_err(self, check_diagnostic, sent_payloads, reset_logger, suggestion):
+        with patch('sys.stderr', StringIO()):
+            logger = EspLog()
+            logger.warn('careful', suggestion=suggestion)
+            logger.err('bad', suggestion=suggestion)
+
+        payloads = sent_payloads()
+        assert [p['type'] for p in payloads] == ['warning', 'error']
+        for payload in payloads:
+            check_diagnostic(payload)
+
+    def test_excepthook(self, check_diagnostic, sent_payloads):
+        from esp_pylib import excepthook as eh
+
+        with patch('sys.stderr', StringIO()):
+            try:
+                raise ValueError('boom')
+            except ValueError:
+                eh._sys_excepthook(*sys.exc_info())
+            eh._sys_excepthook(RuntimeError, RuntimeError(), None)
+
+        payloads = sent_payloads()
+        assert [p['suggestion'] is None for p in payloads] == [False, True]
+        for payload in payloads:
+            check_diagnostic(payload)
+
+    def test_send_event(self, validator, sent_payloads):
+        ws.send_event('gdb_stub', port='/dev/ttyUSB0', prog='/b.elf')
+
+        (payload,) = sent_payloads()
+        validator.validate(payload)
