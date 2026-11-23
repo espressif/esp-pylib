@@ -3,10 +3,13 @@
 """Tests for esp_pylib.ws (IDE WebSocket), esp_pylib.excepthook, and the IDE WebSocket JSON Schema."""
 
 import json
+import os
+import subprocess
 import sys
 import threading
 from io import StringIO
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
@@ -37,6 +40,7 @@ def _reset_ws_state() -> None:
                 pass
             ws._connection = None
         ws._ws_url = ws._URL_UNREAD  # type: ignore[assignment]
+    ws._source = ws._SOURCE_UNREAD  # type: ignore[assignment]
 
 
 @pytest.fixture(autouse=True)
@@ -241,13 +245,15 @@ class TestSendLogMessage:
         mock_conn = MagicMock()
         mock_ensure.return_value = mock_conn
 
-        ws.send_log_message('error', 'bad', 'fix it', '/src/x.py', 7)
+        with patch('esp_pylib.ws._detect_source', return_value='esptool'):
+            ws.send_log_message('error', 'bad', 'fix it', '/src/x.py', 7)
 
         mock_ensure.assert_called()
         mock_conn.send.assert_called_once()
         payload = json.loads(mock_conn.send.call_args[0][0])
         assert payload == {
             'type': 'error',
+            'source': 'esptool',
             'file': '/src/x.py',
             'line': 7,
             'message': 'bad',
@@ -556,6 +562,48 @@ class TestExcepthook:
         assert 'thread err' in sent[0][1]
 
 
+class TestSource:
+    @pytest.mark.parametrize(
+        'spec_name, argv, expected',
+        [
+            ('esptool.__main__', ['/venv/lib/esptool/__main__.py', 'flash-id'], 'esptool'),
+            ('esp_idf_monitor.__main__', ['/venv/lib/esp_idf_monitor/__main__.py'], 'esp-idf-monitor'),
+            ('espefuse', ['/venv/lib/espefuse/__init__.py'], 'espefuse'),
+            (None, ['/esp/esp-idf/tools/idf.py', 'flash'], 'idf.py'),
+            (None, ['/esp/esp-idf/components/partition_table/gen_esp32part.py'], 'gen_esp32part.py'),
+            (None, ['/venv/bin/espefuse', 'summary'], 'espefuse'),
+            (None, ['/dist/esptool.EXE'], 'esptool'),
+            (None, ['/venv/Scripts/esp-coredump-script.py'], 'esp-coredump'),
+            ('__main__', ['tool_dir/'], 'tool_dir'),
+            (None, ['-c'], None),
+            (None, [''], None),
+            (None, [], None),
+        ],
+    )
+    def test_detect(self, spec_name, argv, expected):
+        spec = SimpleNamespace(name=spec_name) if spec_name else None
+        with patch.dict(sys.modules, {'__main__': SimpleNamespace(__spec__=spec)}), patch.object(sys, 'argv', argv):
+            assert ws._detect_source() == expected
+
+    @pytest.mark.parametrize('as_module, expected', [(True, 'my-tool'), (False, 'cli.py')])
+    def test_detect_real_launch(self, tmp_path, as_module, expected):
+        """Check the real ``__main__`` spec of ``python -m`` and of a script on this interpreter."""
+        pkg = tmp_path / 'my_tool'
+        pkg.mkdir()
+        (pkg / '__init__.py').write_text('')
+        (pkg / 'cli.py').write_text('from esp_pylib.ws import _detect_source\nprint(_detect_source())\n')
+        cmd = [sys.executable, '-m', 'my_tool.cli'] if as_module else [sys.executable, str(pkg / 'cli.py')]
+        env = {**os.environ, 'PYTHONPATH': os.pathsep.join([str(tmp_path), *sys.path])}
+        out = subprocess.run(cmd, cwd=tmp_path, env=env, stdout=subprocess.PIPE, check=True).stdout
+        assert out.decode().strip() == expected
+
+    def test_detected_once(self):
+        with patch('esp_pylib.ws._detect_source', return_value='esptool') as mock_detect:
+            assert ws._get_source() == 'esptool'
+            assert ws._get_source() == 'esptool'
+        mock_detect.assert_called_once()
+
+
 class TestSchema:
     """The JSON Schema accepts the protocol messages and rejects malformed ones."""
 
@@ -582,6 +630,15 @@ class TestSchema:
                 'suggestion': 'fix it',
             },
             {
+                'type': 'error',
+                'source': 'esptool',
+                'file': '/src/x.py',
+                'line': 7,
+                'message': 'bad',
+                'suggestion': None,
+            },
+            {'type': 'exception', 'source': None, 'file': '<unknown>', 'line': 0, 'message': '', 'suggestion': None},
+            {
                 'type': 'event',
                 'event': 'gdb_stub',
                 'port': '/dev/ttyUSB0',
@@ -600,6 +657,8 @@ class TestSchema:
             {'type': 'hint', 'file': 'f.py', 'line': 1, 'message': 'n', 'suggestion': None},
             {'type': 'error', 'file': 'f.py', 'line': -1, 'message': 'e', 'suggestion': None},
             {'type': 'error', 'file': 'f.py', 'message': 'e', 'suggestion': None},
+            {'type': 'error', 'source': '', 'file': 'f.py', 'line': 1, 'message': 'e', 'suggestion': None},
+            {'type': 'error', 'source': 1, 'file': 'f.py', 'line': 1, 'message': 'e', 'suggestion': None},
             {'type': 'event'},
             {'type': 'event', 'event': ''},
             {'type': 'nope', 'event': 'debug_finished'},

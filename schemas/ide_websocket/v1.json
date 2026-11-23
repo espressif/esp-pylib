@@ -22,6 +22,11 @@
           "enum": ["warning", "error", "exception"],
           "description": "warning and error carry the console line as plain text, with Rich markup removed and without the WARNING: or ERROR: prefix. exception is an uncaught crash. SystemExit and KeyboardInterrupt are not reported."
         },
+        "source": {
+          "type": ["string", "null"],
+          "minLength": 1,
+          "description": "Name the sending tool was started with. For python -m, this is the package name with underscores changed to hyphens, such as \"esptool\" or \"esp-idf-monitor\". For a script or command, this is its file name, such as \"idf.py\", \"espefuse\", or \"gen_esp32part.py\". When idf.py runs another tool, the source is that tool, not idf.py. A tool used as a library inside another program reports that program. null if the name is not known, such as for python -c. Older esp-pylib versions leave this field out."
+        },
         "file": {
           "type": "string",
           "description": "Python file that logged the message, or where the exception was raised. \"<unknown>\" if the file is not known. This is usually a file inside the tool, not the user's project."
@@ -62,6 +67,7 @@
   "examples": [
     {
       "type": "error",
+      "source": "esptool",
       "file": "/path/to/esptool/esptool/__init__.py",
       "line": 1374,
       "message": "A fatal error occurred: Failed to connect to Espressif device: No serial data received.",

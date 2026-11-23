@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import sys
 import threading
 import time
 from typing import TYPE_CHECKING
@@ -39,7 +41,10 @@ _ENV_VAR = 'ESP_IDE_WS'
 # without it, every call on a CLI run with no IDE would re-acquire the lock and re-read os.environ.
 _URL_UNREAD: object = object()
 
+_SOURCE_UNREAD: object = object()
+
 _ws_url: str | None = _URL_UNREAD  # type: ignore[assignment]
+_source: str | None = _SOURCE_UNREAD  # type: ignore[assignment]
 _connection: ClientConnection | None = None
 # Guards _ws_url and _connection. The threading.excepthook integration means
 # send_log_message can be invoked from any thread, so all mutation of the
@@ -63,6 +68,35 @@ def _get_ws_url() -> str | None:
         if _ws_url is _URL_UNREAD:
             _ws_url = os.environ.get(_ENV_VAR)
         return _ws_url
+
+
+def _detect_source() -> str | None:
+    """Return the name the running tool was started with, or ``None`` if it is not known.
+
+    ``python -m esp_idf_monitor`` gives the top-level package with ``_`` changed to ``-``
+    (``esp-idf-monitor``), matching the distribution names of Espressif tools. A script,
+    console script, or frozen binary gives its file name (``idf.py``, ``espefuse``), without
+    the ``.exe`` / ``-script.py`` suffix of Windows launchers. ``python -c`` and the
+    interactive interpreter give ``None``.
+    """
+    spec = getattr(sys.modules.get('__main__'), '__spec__', None)
+    name: str | None = getattr(spec, 'name', None)
+    # A directory or zip app run as a script has the spec name "__main__"; use its path.
+    if name and name != '__main__':
+        return name.split('.')[0].replace('_', '-')
+    argv = getattr(sys, 'argv', None)
+    if not argv or argv[0] in ('', '-', '-c'):
+        return None
+    base = os.path.basename(argv[0].rstrip('/\\'))
+    return re.sub(r'(-script\.pyw?|\.exe)$', '', base, flags=re.IGNORECASE) or None
+
+
+def _get_source() -> str | None:
+    """Return `_detect_source`, cached for the lifetime of the process."""
+    global _source
+    if _source is _SOURCE_UNREAD:
+        _source = _detect_source()
+    return _source
 
 
 def is_enabled() -> bool:
@@ -233,7 +267,10 @@ def send_log_message(
     file: str,
     line: int,
 ) -> None:
-    """Send a structured log message to the IDE. No-op if ESP_IDE_WS is unset."""
+    """Send a structured log message to the IDE. No-op if ESP_IDE_WS is unset.
+
+    The payload also carries ``source``, the name of the running tool (see `_detect_source`).
+    """
     if not _get_ws_url():
         return
     conn = _ensure_connection()
@@ -243,6 +280,7 @@ def send_log_message(
     payload = json.dumps(
         {
             'type': typ,
+            'source': _get_source(),
             'file': file,
             'line': line,
             'message': message,

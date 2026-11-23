@@ -222,6 +222,8 @@ It chains to the previous `sys.excepthook` / `threading.excepthook`, filters `Sy
 
 Diagnostic and event messages are specified in [`schemas/ide_websocket/v1.json`](https://github.com/espressif/esp-pylib/blob/master/schemas/ide_websocket/v1.json).
 
+Each diagnostic carries a `source` field with the tool name (e.g. `esptool`, `esp-idf-monitor`, `idf.py`). esp-pylib detects it from how the process was started — do not add any per-tool code to set it. Tool tests that compare the exact JSON sent over the socket must expect the extra key; tests that mock `esp_pylib.logger.send_log_message` are unaffected (its signature did not change).
+
 ### Step 7: Replace config loader
 
 `ToolConfig` finds, parses, validates, and caches an INI-style config file (pure stdlib, no extras).
