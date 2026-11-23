@@ -35,6 +35,9 @@ __all__ = [
 ]
 
 _ENV_VAR = 'ESP_IDE_WS'
+# Set by esp-pylib, not by the IDE: comma-separated PIDs of the esp-pylib processes that
+# started this one, outermost first. Inherited by child processes through cmake and ninja.
+_PARENT_PIDS_ENV_VAR = 'ESP_IDE_WS_PARENT_PIDS'
 
 # Sentinel distinguishing "env var has not been read yet" from "env var was read and is unset".
 # Caching the negative result keeps is_enabled() — called on every warn/err — truly one-shot:
@@ -45,6 +48,7 @@ _SOURCE_UNREAD: object = object()
 
 _ws_url: str | None = _URL_UNREAD  # type: ignore[assignment]
 _source: str | None = _SOURCE_UNREAD  # type: ignore[assignment]
+_parent_pids: list[int] = []
 _connection: ClientConnection | None = None
 # Guards _ws_url and _connection. The threading.excepthook integration means
 # send_log_message can be invoked from any thread, so all mutation of the
@@ -97,6 +101,32 @@ def _get_source() -> str | None:
     if _source is _SOURCE_UNREAD:
         _source = _detect_source()
     return _source
+
+
+def _register_process() -> None:
+    """Record which esp-pylib processes started this one and pass the chain on to child processes.
+
+    Runs once at import, and only when ``ESP_IDE_WS`` is set, so it happens before the tool
+    starts any child process. A child that also reports to the IDE sends this process's PID in
+    ``parent_pids``, which lets the IDE tell a parent's "tool failed" error from the child's own
+    report of the same problem. Malformed inherited values are ignored.
+    """
+    global _parent_pids
+    if not os.environ.get(_ENV_VAR):
+        return
+    try:
+        pids = [int(p) for p in os.environ.get(_PARENT_PIDS_ENV_VAR, '').split(',') if p]
+    except ValueError:
+        pids = []
+    own = os.getpid()
+    # Re-registration in the same process (e.g. a module reload) must not list itself as a parent.
+    if pids and pids[-1] == own:
+        pids.pop()
+    _parent_pids = pids
+    os.environ[_PARENT_PIDS_ENV_VAR] = ','.join(str(p) for p in [*pids, own])
+
+
+_register_process()
 
 
 def is_enabled() -> bool:
@@ -269,7 +299,8 @@ def send_log_message(
 ) -> None:
     """Send a structured log message to the IDE. No-op if ESP_IDE_WS is unset.
 
-    The payload also carries ``source``, the name of the running tool (see `_detect_source`).
+    The payload also carries ``source``, the name of the running tool (see `_detect_source`),
+    and ``pid`` / ``parent_pids`` (see `_register_process`).
     """
     if not _get_ws_url():
         return
@@ -281,6 +312,8 @@ def send_log_message(
         {
             'type': typ,
             'source': _get_source(),
+            'pid': os.getpid(),
+            'parent_pids': _parent_pids,
             'file': file,
             'line': line,
             'message': message,

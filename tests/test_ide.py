@@ -41,6 +41,7 @@ def _reset_ws_state() -> None:
             ws._connection = None
         ws._ws_url = ws._URL_UNREAD  # type: ignore[assignment]
     ws._source = ws._SOURCE_UNREAD  # type: ignore[assignment]
+    ws._parent_pids = []
 
 
 @pytest.fixture(autouse=True)
@@ -242,6 +243,7 @@ class TestSendLogMessage:
     @patch('esp_pylib.ws._ensure_connection')
     def test_sends_json_payload(self, mock_ensure, monkeypatch):
         monkeypatch.setenv('ESP_IDE_WS', 'ws://localhost:9')
+        monkeypatch.setattr(ws, '_parent_pids', [100])
         mock_conn = MagicMock()
         mock_ensure.return_value = mock_conn
 
@@ -254,6 +256,8 @@ class TestSendLogMessage:
         assert payload == {
             'type': 'error',
             'source': 'esptool',
+            'pid': os.getpid(),
+            'parent_pids': [100],
             'file': '/src/x.py',
             'line': 7,
             'message': 'bad',
@@ -604,6 +608,58 @@ class TestSource:
         mock_detect.assert_called_once()
 
 
+class TestParentPids:
+    @pytest.fixture(autouse=True)
+    def clean_env(self, monkeypatch):
+        """Start without an inherited chain; monkeypatch also removes the one `_register_process` writes."""
+        monkeypatch.setenv(ws._PARENT_PIDS_ENV_VAR, '')
+        monkeypatch.delenv(ws._PARENT_PIDS_ENV_VAR)
+        monkeypatch.setenv('ESP_IDE_WS', 'ws://localhost:9')
+
+    def test_not_registered_without_ide(self, monkeypatch):
+        monkeypatch.delenv('ESP_IDE_WS')
+        ws._register_process()
+        assert ws._parent_pids == []
+        assert ws._PARENT_PIDS_ENV_VAR not in os.environ
+
+    @pytest.mark.parametrize(
+        'inherited, expected',
+        [
+            (None, []),
+            ('10,20', [10, 20]),
+            ('10,abc', []),
+            (f'10,{os.getpid()}', [10]),
+        ],
+        ids=['top-level', 'inherited', 'malformed', 're-registered'],
+    )
+    def test_register(self, monkeypatch, inherited, expected):
+        if inherited is not None:
+            monkeypatch.setenv(ws._PARENT_PIDS_ENV_VAR, inherited)
+        ws._register_process()
+        assert ws._parent_pids == expected
+        assert os.environ[ws._PARENT_PIDS_ENV_VAR] == ','.join(str(p) for p in [*expected, os.getpid()])
+
+    def test_real_process_chain(self, tmp_path):
+        """Three esp-pylib processes, each started through a plain Python process that is not listed."""
+        script = tmp_path / 'chain.py'
+        script.write_text(
+            'import json, os, subprocess, sys\n'
+            'import esp_pylib.ws as ws\n'
+            "out = [{'pid': os.getpid(), 'parent_pids': ws._parent_pids}]\n"
+            'if int(sys.argv[1]):\n'
+            "    relay = 'import subprocess, sys; sys.exit(subprocess.run(sys.argv[1:]).returncode)'\n"
+            '    cmd = [sys.executable, "-c", relay, sys.executable, __file__, str(int(sys.argv[1]) - 1)]\n'
+            '    out += json.loads(subprocess.run(cmd, stdout=subprocess.PIPE, check=True).stdout)\n'
+            'print(json.dumps(out))\n'
+        )
+        env = {**os.environ, 'PYTHONPATH': os.pathsep.join(sys.path)}
+        out = subprocess.run([sys.executable, str(script), '2'], env=env, stdout=subprocess.PIPE, check=True).stdout
+        top, child, grandchild = json.loads(out)
+        assert top['parent_pids'] == []
+        assert child['parent_pids'] == [top['pid']]
+        assert grandchild['parent_pids'] == [top['pid'], child['pid']]
+
+
 class TestSchema:
     """The JSON Schema accepts the protocol messages and rejects malformed ones."""
 
@@ -639,6 +695,16 @@ class TestSchema:
             },
             {'type': 'exception', 'source': None, 'file': '<unknown>', 'line': 0, 'message': '', 'suggestion': None},
             {
+                'type': 'error',
+                'source': 'idf.py',
+                'pid': 4300,
+                'parent_pids': [],
+                'file': 'idf.py',
+                'line': 1,
+                'message': 'ninja failed',
+                'suggestion': None,
+            },
+            {
                 'type': 'event',
                 'event': 'gdb_stub',
                 'port': '/dev/ttyUSB0',
@@ -659,6 +725,10 @@ class TestSchema:
             {'type': 'error', 'file': 'f.py', 'message': 'e', 'suggestion': None},
             {'type': 'error', 'source': '', 'file': 'f.py', 'line': 1, 'message': 'e', 'suggestion': None},
             {'type': 'error', 'source': 1, 'file': 'f.py', 'line': 1, 'message': 'e', 'suggestion': None},
+            {'type': 'error', 'pid': 0, 'file': 'f.py', 'line': 1, 'message': 'e', 'suggestion': None},
+            {'type': 'error', 'pid': '1', 'file': 'f.py', 'line': 1, 'message': 'e', 'suggestion': None},
+            {'type': 'error', 'parent_pids': [0], 'file': 'f.py', 'line': 1, 'message': 'e', 'suggestion': None},
+            {'type': 'error', 'parent_pids': '1', 'file': 'f.py', 'line': 1, 'message': 'e', 'suggestion': None},
             {'type': 'event'},
             {'type': 'event', 'event': ''},
             {'type': 'nope', 'event': 'debug_finished'},

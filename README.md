@@ -123,6 +123,7 @@ Espressif IDEs can launch tools with a WebSocket URL so errors, warnings, and ex
 | Variable | Purpose |
 | -------- | ------- |
 | `ESP_IDE_WS` | WebSocket URL (e.g. `ws://127.0.0.1:12345`). Set by the IDE, not by end users. |
+| `ESP_IDE_WS_PARENT_PIDS` | Set by esp-pylib itself (only when `ESP_IDE_WS` is set) so child processes can report `parent_pids`. Do not set it yourself. |
 
 **`esp_pylib.ws` API**
 
@@ -138,6 +139,8 @@ Espressif IDEs can launch tools with a WebSocket URL so errors, warnings, and ex
 {
   "type": "warning | error | exception",
   "source": "esptool",
+  "pid": 4321,
+  "parent_pids": [4300],
   "file": "/absolute/path/to/source.py",
   "line": 42,
   "message": "Human-readable description",
@@ -148,6 +151,8 @@ Espressif IDEs can launch tools with a WebSocket URL so errors, warnings, and ex
 For `warning` and `error`, `message` is the console text without the prefix and with Rich markup removed. The normative schema for this object and for event messages is [`schemas/ide_websocket/v1.json`](./schemas/ide_websocket/v1.json). Receivers must ignore keys they do not know. A published schema version only changes in ways such receivers can ignore: new optional keys, and clearer descriptions and examples. Removing or renaming a key, making it required, or changing its type or meaning goes into a new file (e.g. `v2.json`), and older versions stay available.
 
 `source` is the name the sending tool was started with, detected automatically (tools do not set it): `python -m esp_idf_monitor` gives `esp-idf-monitor` (package name, `_` → `-`), and a script or console script gives its file name (`idf.py`, `espefuse`, `gen_esp32part.py`). It is `null` when unknown (e.g. `python -c`), and older esp-pylib versions omit it.
+
+`pid` is the sender's process ID, and `parent_pids` lists the esp-pylib processes that started it, outermost first (non-esp-pylib processes in between, such as cmake and ninja, are skipped). esp-pylib passes the chain to child processes through `ESP_IDE_WS_PARENT_PIDS` when it is imported, so tools do not need any code for it. This lets the IDE recognize the follow-up error a parent sends when a child fails: for `idf.py flash`, esptool reports the real error and then `idf.py` reports "ninja failed with exit code 1" from a PID listed in esptool's `parent_pids`. Show such an error as a summary of the earlier one rather than as a separate problem. Apply this within one run only (e.g. one IDE task): process IDs get reused, on Windows especially quickly, so a later run can see the same PID again.
 
 #### Uncaught exceptions
 

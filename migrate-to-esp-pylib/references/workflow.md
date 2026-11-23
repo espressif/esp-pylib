@@ -222,7 +222,7 @@ It chains to the previous `sys.excepthook` / `threading.excepthook`, filters `Sy
 
 Diagnostic and event messages are specified in [`schemas/ide_websocket/v1.json`](https://github.com/espressif/esp-pylib/blob/master/schemas/ide_websocket/v1.json).
 
-Each diagnostic carries a `source` field with the tool name (e.g. `esptool`, `esp-idf-monitor`, `idf.py`). esp-pylib detects it from how the process was started — do not add any per-tool code to set it. Tool tests that compare the exact JSON sent over the socket must expect the extra key; tests that mock `esp_pylib.logger.send_log_message` are unaffected (its signature did not change).
+Each diagnostic carries a `source` field with the tool name (e.g. `esptool`, `esp-idf-monitor`, `idf.py`) and `pid` / `parent_pids` fields that let the IDE group a child tool's error with the follow-up error of the tool that started it. esp-pylib fills all three automatically (when `ESP_IDE_WS` is set, importing it also exports `ESP_IDE_WS_PARENT_PIDS` for child processes) — do not add any per-tool code for them, and do not reset that variable when building a child environment. Tool tests that compare the exact JSON sent over the socket must expect the extra keys; tests that mock `esp_pylib.logger.send_log_message` are unaffected (its signature did not change).
 
 ### Step 7: Replace config loader
 
